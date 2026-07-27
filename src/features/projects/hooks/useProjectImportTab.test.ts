@@ -110,7 +110,7 @@ describe('useProjectImportTab', () => {
         expect(mockedImportRawSamples).toHaveBeenCalledWith(77, {
             samples: ['raw-1'],
             validated_samples: [],
-            backup_project: false,
+            backup_project: true,
             backup_project_skip_already_imported: true,
         });
         expect(result.current.selectedRawSamples.ids.size).toBe(0);
@@ -142,7 +142,7 @@ describe('useProjectImportTab', () => {
 
         expect(mockedImportEcoTaxaSamples).toHaveBeenCalledWith(77, {
             samples: ['eco-2'],
-            backup_project: false,
+            backup_project: true,
             backup_project_skip_already_imported: true,
         });
         expect(result.current.isImporting).toBe(false);
@@ -193,7 +193,7 @@ describe('useProjectImportTab', () => {
 
         expect(mockedImportEcoTaxaSamples).toHaveBeenCalledWith(77, {
             samples: ['eco-1'],
-            backup_project: false,
+            backup_project: true,
             backup_project_skip_already_imported: true,
         });
         expect(result.current.selectedEcoTaxaSamples.ids.size).toBe(0);

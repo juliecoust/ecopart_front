@@ -136,7 +136,7 @@ describe('I. IMPORT TAB (ProjectImportTab)', () => {
                 expect.objectContaining({
                     samples: ['raw-1'],
                     validated_samples: [],
-                    backup_project: false,
+                    backup_project: true,
                     backup_project_skip_already_imported: true,
                 })
             );
