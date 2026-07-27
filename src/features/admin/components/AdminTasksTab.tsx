@@ -1,6 +1,7 @@
+import { useMemo } from "react";
 import {
     Box, Typography, Button, TextField, MenuItem,
-    Snackbar, Alert, Stack, IconButton, CircularProgress, Tooltip, Paper
+    Snackbar, Alert, Stack, IconButton, CircularProgress, Tooltip, Paper, Chip
 } from "@mui/material";
 
 import CloseIcon from "@mui/icons-material/Close";
@@ -10,12 +11,13 @@ import FilterListIcon from "@mui/icons-material/FilterList";
 import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
 import LaunchIcon from "@mui/icons-material/Launch";
 
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 
 import { useTasksTable } from "@/features/projects/hooks/useTasksTable";
-import { Task } from "@/features/projects/api/projects.api";
+import { SearchFilter, Task } from "@/features/projects/api/projects.api";
 import { buildBaseTaskColumns, isDownloadableTask } from "@/features/projects/utils/taskColumns";
+import { parseUserIdsParam } from "../utils/userFilterParams";
 
 /**
  * AdminTasksTab — the "TASKS" panel of the EcoPart administration page.
@@ -28,6 +30,25 @@ import { buildBaseTaskColumns, isDownloadableTask } from "@/features/projects/ut
  */
 export default function AdminTasksTab() {
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+
+    // When opened from the USERS tab (?owner=1,2,3), scope the list to those
+    // task owners. Memoized so the array stays referentially stable for the hook.
+    const ownerIds = useMemo(() => parseUserIdsParam(searchParams.get("owner")), [searchParams]);
+    const extraFilters = useMemo<SearchFilter[]>(() => {
+        if (ownerIds.length === 0) return [];
+        return [
+            ownerIds.length === 1
+                ? { field: "task_owner_id", operator: "=", value: ownerIds[0] }
+                : { field: "task_owner_id", operator: "IN", value: ownerIds },
+        ];
+    }, [ownerIds]);
+
+    const clearOwnerFilter = () => {
+        const next = new URLSearchParams(searchParams);
+        next.delete("owner");
+        setSearchParams(next, { replace: true });
+    };
 
     const {
         tasks, loading, totalRows, error,
@@ -39,7 +60,7 @@ export default function AdminTasksTab() {
         handleDeleteTasks,
         downloadingTaskId, handleDownloadTaskFile,
         snackbar, closeSnackbar
-    } = useTasksTable();
+    } = useTasksTable(extraFilters);
 
     const columns: GridColDef<Task>[] = [
         ...buildBaseTaskColumns(),
@@ -142,6 +163,18 @@ export default function AdminTasksTab() {
                                 </IconButton>
                             </span>
                         </Tooltip>
+                        {ownerIds.length > 0 && (
+                            <Chip
+                                color="primary"
+                                variant="outlined"
+                                onDelete={clearOwnerFilter}
+                                label={
+                                    ownerIds.length === 1
+                                        ? `Owned by user #${ownerIds[0]}`
+                                        : `Owned by ${ownerIds.length} users`
+                                }
+                            />
+                        )}
                     </Stack>
                 </Box>
 

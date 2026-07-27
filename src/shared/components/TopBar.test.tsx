@@ -26,7 +26,7 @@ const renderWithMarkers = (route = '/') =>
             <TopBar />
             <Routes>
                 <Route path="/" element={<h1>Home Page</h1>} />
-                <Route path="/settings/:tabName?" element={<h1>Settings Page</h1>} />
+                <Route path="/settings/:userId?/:tabName?" element={<h1>Settings Page</h1>} />
                 <Route path="/login" element={<h1>Login Page</h1>} />
                 <Route path="/register" element={<h1>Register Page</h1>} />
             </Routes>

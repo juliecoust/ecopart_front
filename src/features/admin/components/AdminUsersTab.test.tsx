@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLocation } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 
 import AdminUsersTab from './AdminUsersTab';
@@ -8,6 +9,12 @@ import { renderWithRouter } from '@/test/utils';
 import { server } from '@/test/msw/server';
 import { loginAsUser } from '@/test/helpers/auth.helpers';
 import type { AdminUser } from '../api/adminUsers.api';
+
+/** Surfaces the current location so navigation-driven actions can be asserted. */
+function LocationProbe() {
+    const location = useLocation();
+    return <div data-testid="location">{location.pathname + location.search}</div>;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers — the admin USERS tab hits POST /users/searches (list) and
@@ -60,7 +67,19 @@ const mockUserPatch = () => {
     );
 };
 
-const renderUsersTab = () => renderWithRouter(<AdminUsersTab />, { route: '/admin/users' });
+const renderUsersTab = () =>
+    renderWithRouter(<><AdminUsersTab /><LocationProbe /></>, { route: '/admin/users' });
+
+const mockUserDelete = () => {
+    const deleteCalls: number[] = [];
+    server.use(
+        http.delete('*/users/:userId/', ({ params }) => {
+            deleteCalls.push(Number(params.userId));
+            return HttpResponse.json({ message: 'ok' });
+        }),
+    );
+    return deleteCalls;
+};
 
 describe('AdminUsersTab', () => {
     beforeEach(() => {
@@ -268,18 +287,85 @@ describe('AdminUsersTab', () => {
         expect(screen.getByRole('button', { name: 'REMOVE ADMIN' })).toBeDisabled();
     });
 
-    it('TC-AF13: renders the not-yet-wired actions as disabled', async () => {
+    it('TC-AF13: NEW USER is enabled; the removed mockup actions are gone and selection actions are disabled with no selection', async () => {
         mockUsersSearch([makeUser({ user_id: 1 })], 1);
 
         renderUsersTab();
         await screen.findByText('John Doe');
 
-        expect(screen.getByRole('button', { name: 'NEW USER' })).toBeDisabled();
-        expect(screen.getByRole('button', { name: 'REMOVE FROM ALL PROJECTS' })).toBeDisabled();
-        expect(screen.getByRole('button', { name: 'ACTIVE' })).toBeDisabled();
-        expect(screen.getByRole('button', { name: 'DEACTIVATE' })).toBeDisabled();
+        // NEW USER now opens the create-user modal (no longer a "coming soon" stub).
+        expect(screen.getByRole('button', { name: 'NEW USER' })).toBeEnabled();
+
+        // Selection-scoped actions are disabled while nothing is selected.
+        expect(screen.getByRole('button', { name: 'DELETE' })).toBeDisabled();
         expect(screen.getByRole('button', { name: 'TASKS' })).toBeDisabled();
         expect(screen.getByRole('button', { name: 'PROJECTS' })).toBeDisabled();
+
+        // The filter icon and the old ACTIVE / DEACTIVATE / REMOVE FROM ALL PROJECTS
+        // actions were removed per the admin-section feedback.
+        expect(screen.queryByRole('button', { name: 'REMOVE FROM ALL PROJECTS' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'ACTIVE' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'DEACTIVATE' })).not.toBeInTheDocument();
+    });
+
+    it('TC-AF17: DELETE deactivates the selected accounts via DELETE /users/:id/ after confirmation', async () => {
+        const user = userEvent.setup();
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockUsersSearch([
+            makeUser({ user_id: 1, last_name: 'Doe' }),
+            makeUser({ user_id: 2, first_name: 'Jane', last_name: 'Roe' }),
+        ], 2);
+        const deleteCalls = mockUserDelete();
+
+        renderUsersTab();
+        await screen.findByText('Jane Roe');
+
+        const checkboxes = screen.getAllByRole('checkbox');
+        await user.click(checkboxes[1]);
+        await user.click(checkboxes[2]);
+
+        expect(await screen.findByText('2 items selected')).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: 'DELETE' }));
+
+        await waitFor(() => expect(deleteCalls.sort()).toEqual([1, 2]));
+        expect(await screen.findByText('User account(s) deleted.')).toBeInTheDocument();
+    });
+
+    it('TC-AF18: NEW USER opens the create-user modal', async () => {
+        const user = userEvent.setup();
+        mockUsersSearch([makeUser({ user_id: 1 })], 1);
+
+        renderUsersTab();
+        await screen.findByText('John Doe');
+
+        await user.click(screen.getByRole('button', { name: 'NEW USER' }));
+
+        expect(await screen.findByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Create user' })).toBeInTheDocument();
+    });
+
+    it('TC-AF19: the row edit icon navigates to the user settings URL', async () => {
+        const user = userEvent.setup();
+        mockUsersSearch([makeUser({ user_id: 7 })], 1);
+
+        renderUsersTab();
+        await screen.findByText('John Doe');
+
+        await user.click(screen.getByRole('button', { name: 'Edit user 7' }));
+
+        expect(screen.getByTestId('location')).toHaveTextContent('/settings/7/ecopart_account');
+    });
+
+    it('TC-AF20: TASKS and PROJECTS open the matching admin tab filtered by the selected user', async () => {
+        const user = userEvent.setup();
+        mockUsersSearch([makeUser({ user_id: 3 })], 1);
+
+        renderUsersTab();
+        await screen.findByText('John Doe');
+
+        await user.click(screen.getAllByRole('checkbox')[1]);
+        await user.click(screen.getByRole('button', { name: 'PROJECTS' }));
+        expect(screen.getByTestId('location')).toHaveTextContent('/admin/projects?users=3');
     });
 
     it('TC-AF14: prevents selecting a deleted / anonymized account', async () => {
@@ -306,6 +392,27 @@ describe('AdminUsersTab', () => {
 
         expect(await screen.findByText(/Failed to load users/i)).toBeInTheDocument();
         expect(screen.queryByText('John Doe')).not.toBeInTheDocument();
+    });
+
+    it('TC-AF21: derives and displays each user\'s manager / member project counts', async () => {
+        mockUsersSearch([makeUser({ user_id: 9 })], 1);
+        // The counts come from POST /projects/searches with a managers / members filter;
+        // return a different total depending on which role was queried.
+        server.use(
+            http.post('*/projects/searches', async ({ request }) => {
+                const filters = (await request.json()) as Array<{ field: string }>;
+                const role = filters[0]?.field;
+                const total = role === 'managers' ? 3 : role === 'members' ? 5 : 0;
+                return HttpResponse.json({ search_info: { total, page: 1, limit: 1 }, projects: [] });
+            }),
+        );
+
+        renderUsersTab();
+        await screen.findByText('John Doe');
+
+        // Manager count then member count for the single row.
+        expect(await screen.findByText('3')).toBeInTheDocument();
+        expect(await screen.findByText('5')).toBeInTheDocument();
     });
 
     it('TC-AF16: keeps only the failed users selected when some admin updates fail', async () => {

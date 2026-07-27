@@ -63,7 +63,9 @@ export interface Project {
 export interface SearchFilter {
     field: string;
     operator: string;
-    value: string | number | boolean | string[] | null;
+    // number[] / string[] carry the values for an `IN` operator (e.g. a set of
+    // user ids for the managers / members / granted_users / task_owner_id filters).
+    value: string | number | boolean | string[] | number[] | null;
 }
 
 /**
@@ -263,6 +265,25 @@ export async function createProject(
         method: "POST",
         body: JSON.stringify(payload),
     });
+}
+
+/**
+ * Count the projects on which a user holds a given privilege (manager or member).
+ *
+ * Uses the projects search endpoint with the `managers` / `members` user filter
+ * (the backend maps these to distinct project ids for the user) and reads
+ * `search_info.total`, so no project rows are transferred (`limit: 1`).
+ */
+export async function countProjectsForUser(
+    userId: number,
+    role: "managers" | "members",
+): Promise<number> {
+    const response = await searchProjects({
+        page: 1,
+        limit: 1,
+        filters: [{ field: role, operator: "IN", value: [userId] }],
+    });
+    return response.search_info.total;
 }
 
 /**

@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { AlertColor } from "@mui/material";
 import { GridPaginationModel, GridRowSelectionModel } from "@mui/x-data-grid";
 
-import type { SearchFilter } from "@/features/projects/api/projects.api";
-import { AdminUser, searchUsers, setUserAdmin } from "../api/adminUsers.api";
+import { countProjectsForUser, type SearchFilter } from "@/features/projects/api/projects.api";
+import { AdminUser, deleteUser, searchUsers, setUserAdmin } from "../api/adminUsers.api";
 
 /**
  * Hook backing the admin USERS tab.
@@ -107,6 +107,41 @@ export const useAdminUsersTable = () => {
         fetchUsers();
     }, [fetchUsers]);
 
+    // Per-user manager / member project counts are not part of the user model, so
+    // we derive them client-side: one projects search per user and per role, reading
+    // only `search_info.total`. This runs after the page of users has loaded and
+    // merges the counts back in as they resolve. Keying on the id string (not on
+    // `users`) means the count-merge itself doesn't re-trigger the effect, and a ref
+    // token discards results from a stale run (page changed / new search) so counts
+    // never land on the wrong rows.
+    const countsRunId = useRef(0);
+    const userIdsKey = users.map((u) => u.user_id).join(",");
+    useEffect(() => {
+        if (!userIdsKey) return;
+
+        const runId = ++countsRunId.current;
+        const userIds = userIdsKey.split(",").map(Number);
+
+        userIds.forEach(async (userId) => {
+            try {
+                const [managerCount, memberCount] = await Promise.all([
+                    countProjectsForUser(userId, "managers"),
+                    countProjectsForUser(userId, "members"),
+                ]);
+                if (runId !== countsRunId.current) return;
+                setUsers((prev) =>
+                    prev.map((u) =>
+                        u.user_id === userId
+                            ? { ...u, manager_count: managerCount, member_count: memberCount }
+                            : u,
+                    ),
+                );
+            } catch (err) {
+                console.warn(`[Admin Users] Failed to load project counts for user ${userId}`, err);
+            }
+        });
+    }, [userIdsKey]);
+
     const showSnackbar = (message: string, severity: AlertColor = "info") => {
         setSnackbar({ open: true, message, severity });
     };
@@ -156,6 +191,44 @@ export const useAdminUsersTable = () => {
         }
     };
 
+    /** Delete (deactivate) every user in the current selection, after confirmation. */
+    const handleDeleteUsers = async () => {
+        const selectedIds = getSelectedUserIds(selectedUsers);
+        if (selectedIds.length === 0) return;
+
+        if (!window.confirm(
+            `Are you sure you want to delete ${selectedIds.length} user account(s)? ` +
+            `The account(s) will be deactivated and can no longer sign in.`,
+        )) return;
+
+        setIsActionRunning(true);
+        try {
+            // Attempt every deletion (a single failure must not abort the rest),
+            // then keep only the users that actually failed selected so a retry
+            // targets just those.
+            const results = await Promise.allSettled(
+                selectedIds.map((userId) => deleteUser(userId)),
+            );
+            const failedIds = selectedIds.filter((_, i) => results[i].status === "rejected");
+
+            if (failedIds.length === 0) {
+                showSnackbar("User account(s) deleted.", "success");
+            } else {
+                console.error("[Admin Users] Some deletions failed:", failedIds);
+                showSnackbar("Failed to delete some users.", "error");
+            }
+
+            setSelectedUsers(
+                failedIds.length > 0
+                    ? { type: "include", ids: new Set<number>(failedIds) }
+                    : createEmptySelectionModel(),
+            );
+            fetchUsers();
+        } finally {
+            setIsActionRunning(false);
+        }
+    };
+
     return {
         users,
         loading,
@@ -165,6 +238,7 @@ export const useAdminUsersTable = () => {
         setPaginationModel,
         selectedUsers,
         setSelectedUsers,
+        selectedUserIds: getSelectedUserIds(selectedUsers),
         selectionCount: getSelectionCount(selectedUsers, totalRows),
         searchText,
         setSearchText,
@@ -172,6 +246,9 @@ export const useAdminUsersTable = () => {
         setSearchAttribute,
         isActionRunning,
         handleSetAdmin,
+        handleDeleteUsers,
+        refetchUsers: fetchUsers,
+        showSnackbar,
         snackbar,
         closeSnackbar,
     };

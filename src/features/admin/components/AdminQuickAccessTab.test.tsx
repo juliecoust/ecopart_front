@@ -137,18 +137,28 @@ describe('AdminQuickAccessTab', () => {
         ]);
     });
 
-    it('TC-AH4: renders the admin shortcuts and the useful links', async () => {
+    it('TC-AH4: renders the useful links', async () => {
         mockCounters();
 
         renderQuickAccess();
         await screen.findByText('340');
 
-        expect(screen.getByRole('button', { name: /See all projects as administrator/i })).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: /See all tasks as administrator/i })).toBeInTheDocument();
-
-        expect(screen.getByRole('link', { name: 'GitHub repository' })).toHaveAttribute(
+        expect(screen.getByRole('link', { name: 'Docker administration' })).toHaveAttribute(
+            'href',
+            'https://hub.docker.com/r/ecotaxa/ecopart_front',
+        );
+        expect(screen.getByRole('link', { name: 'Specifications' })).toHaveAttribute(
+            'href',
+            'https://github.com/ecotaxa/ecopart_front#readme',
+        );
+        // The "GitHub repository" line links FRONT and BACK to the two repos.
+        expect(screen.getByRole('link', { name: 'FRONT' })).toHaveAttribute(
             'href',
             'https://github.com/ecotaxa/ecopart_front',
+        );
+        expect(screen.getByRole('link', { name: 'BACK' })).toHaveAttribute(
+            'href',
+            'https://github.com/ecotaxa/ecopart_back',
         );
     });
 

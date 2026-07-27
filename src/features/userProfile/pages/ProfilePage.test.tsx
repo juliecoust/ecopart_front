@@ -633,3 +633,64 @@ describe('ProfilePage - EcoTaxa Tab (Functional)', () => {
     });
 
 });
+
+// ============================================================================
+// SUITE 3: SETTINGS BY USER ID (/settings/:userId/:tabName)
+// ============================================================================
+describe('ProfilePage - editing another account by id', () => {
+    const mockMe = (isAdmin: boolean) =>
+        server.use(
+            http.get('*/auth/user/me', () =>
+                HttpResponse.json({
+                    user_id: 1, first_name: 'John', last_name: 'Doe', email: 'john@doe.com',
+                    organisation: 'CNRS', country: 'FR', user_planned_usage: 'Admin', is_admin: isAdmin,
+                }),
+            ),
+        );
+
+    const renderAt = (route: string) =>
+        renderWithRouter(
+            <Routes>
+                <Route path="/settings/:userId?/:tabName?" element={<ProfilePage />} />
+            </Routes>,
+            { route },
+        );
+
+    beforeEach(() => {
+        loginAsUser();
+    });
+
+    it('TC-E20: an admin loads and edits another user via /settings/:id', async () => {
+        mockMe(true);
+        // getUserById → POST /users/searches returns the target account.
+        server.use(
+            http.post('*/users/searches*', () =>
+                HttpResponse.json({
+                    search_info: { total: 1, page: 1, limit: 1 },
+                    users: [{
+                        user_id: 2, first_name: 'Jane', last_name: 'Roe', email: 'jane@roe.com',
+                        organisation: 'Sorbonne', country: 'FR', user_planned_usage: 'Research',
+                        is_admin: false, valid_email: true, deleted: null,
+                    }],
+                }),
+            ),
+        );
+
+        renderAt('/settings/2/ecopart_account');
+
+        expect(await screen.findByRole('heading', { name: /Edit user #2/i })).toBeInTheDocument();
+        expect(screen.getByLabelText(/First name/i)).toHaveValue('Jane');
+        // Password change is self-only, so the section is hidden for other accounts.
+        expect(screen.queryByRole('heading', { name: /Change password/i })).not.toBeInTheDocument();
+    });
+
+    it('TC-E21: a non-admin is redirected to their own settings when targeting another id', async () => {
+        mockMe(false);
+
+        renderAt('/settings/2/ecopart_account');
+
+        // Redirected to /settings/1/... → their own profile (self view).
+        expect(await screen.findByRole('heading', { name: /^Profile$/i })).toBeInTheDocument();
+        expect(screen.getByLabelText(/First name/i)).toHaveValue('John');
+    });
+});

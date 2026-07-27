@@ -133,10 +133,11 @@ export default function TopBar() {
 
                             <Divider />
 
-                            {/* Navigate to the EcoPart account tab */}
+                            {/* Navigate to the EcoPart account tab. The user's own id is
+                                part of the settings URL (/settings/:userId/:tabName). */}
                             <MenuItem onClick={() => {
                                 handleClose();
-                                navigate("/settings/ecopart_account");
+                                navigate(`/settings/${user.user_id}/ecopart_account`);
                             }}>
                                 <SettingsIcon fontSize="small" sx={{ mr: 1 }} />
                                 Settings
@@ -145,7 +146,7 @@ export default function TopBar() {
                             {/* Navigate straight to the EcoTaxa accounts tab */}
                             <MenuItem onClick={() => {
                                 handleClose();
-                                navigate("/settings/ecotaxa_account");
+                                navigate(`/settings/${user.user_id}/ecotaxa_account`);
                             }}>
                                 <CloudIcon fontSize="small" sx={{ mr: 1 }} />
                                 EcoTaxa account

@@ -1,28 +1,28 @@
+import { useState } from "react";
 import {
     Box, Typography, Button, TextField, MenuItem,
     Snackbar, Alert, Stack, IconButton, Tooltip, Paper
 } from "@mui/material";
 
-import FilterListIcon from "@mui/icons-material/FilterList";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import InfoTooltip from "@/shared/components/InfoTooltip";
-import LinkOffIcon from "@mui/icons-material/LinkOff";
+import DeleteIcon from "@mui/icons-material/Delete";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import RemoveModeratorIcon from "@mui/icons-material/RemoveModerator";
-import CheckIcon from "@mui/icons-material/Check";
-import BlockIcon from "@mui/icons-material/Block";
 import AssignmentIcon from "@mui/icons-material/Assignment";
 import LaunchIcon from "@mui/icons-material/Launch";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import MailOutlineIcon from "@mui/icons-material/MailOutline";
 import ErrorIcon from "@mui/icons-material/Error";
 
+import { useNavigate } from "react-router-dom";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 
 import { CountriesWrapper } from "@/shared/country-wrapper";
 import { AdminUser } from "../api/adminUsers.api";
 import { useAdminUsersTable } from "../hooks/useAdminUsersTable";
+import CreateUserModal from "./CreateUserModal";
 
 /** Human-readable account status derived from the admin-only user fields. */
 const renderAccountStatusCell = (params: GridRenderCellParams<AdminUser>) => {
@@ -57,16 +57,31 @@ const renderCountCell = (value: number | undefined) =>
         : <Typography variant="caption" color="text.secondary">—</Typography>;
 
 export default function AdminUsersTab() {
+    const navigate = useNavigate();
+    const [createOpen, setCreateOpen] = useState(false);
+
     const {
         users, loading, totalRows, error,
         paginationModel, setPaginationModel,
-        selectedUsers, setSelectedUsers, selectionCount,
+        selectedUsers, setSelectedUsers, selectedUserIds, selectionCount,
         searchText, setSearchText,
         searchAttribute, setSearchAttribute,
         isActionRunning,
         handleSetAdmin,
+        handleDeleteUsers,
+        refetchUsers,
+        showSnackbar,
         snackbar, closeSnackbar
     } = useAdminUsersTable();
+
+    // TASKS / PROJECTS bulk shortcuts: jump to the matching admin tab, filtered to
+    // the selected user(s). The target tab reads these query params and applies the
+    // filter (task_owner_id for tasks, granted_users — manager OR member — for projects).
+    const openFilteredTab = (tab: "tasks" | "projects") => {
+        if (selectedUserIds.length === 0) return;
+        const key = tab === "tasks" ? "owner" : "users";
+        navigate(`/admin/${tab}?${key}=${selectedUserIds.join(",")}`);
+    };
 
     const columns: GridColDef<AdminUser>[] = [
         { field: "user_id", headerName: "User id", width: 90 },
@@ -141,10 +156,15 @@ export default function AdminUsersTab() {
             headerName: "",
             width: 60,
             sortable: false,
-            renderCell: () => (
-                <Tooltip title="Edit user (coming soon)">
+            renderCell: (params: GridRenderCellParams<AdminUser>) => (
+                <Tooltip title="Edit user">
                     <span>
-                        <IconButton size="small" disabled>
+                        <IconButton
+                            size="small"
+                            disabled={Boolean(params.row.deleted)}
+                            onClick={() => navigate(`/settings/${params.row.user_id}/ecopart_account`)}
+                            aria-label={`Edit user ${params.row.user_id}`}
+                        >
                             <EditIcon fontSize="small" />
                         </IconButton>
                     </span>
@@ -212,21 +232,15 @@ export default function AdminUsersTab() {
                             <MenuItem value="country">Country</MenuItem>
                             <MenuItem value="user_id">User id</MenuItem>
                         </TextField>
-                        <Tooltip title="Advanced filters (coming soon)">
-                            <span>
-                                <IconButton disabled>
-                                    <FilterListIcon />
-                                </IconButton>
-                            </span>
-                        </Tooltip>
                         <Box sx={{ flexGrow: 1 }} />
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="contained" startIcon={<AddIcon />} disabled sx={{ whiteSpace: "nowrap" }}>
-                                    NEW USER
-                                </Button>
-                            </span>
-                        </Tooltip>
+                        <Button
+                            variant="contained"
+                            startIcon={<AddIcon />}
+                            onClick={() => setCreateOpen(true)}
+                            sx={{ whiteSpace: "nowrap" }}
+                        >
+                            NEW USER
+                        </Button>
                     </Stack>
                 </Box>
 
@@ -244,14 +258,6 @@ export default function AdminUsersTab() {
                         />
                     </Typography>
                     <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
-                        {/* No backend endpoint yet — reserved bulk action from the mockup. */}
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<LinkOffIcon />} sx={{ fontWeight: "bold" }}>
-                                    REMOVE FROM ALL PROJECTS
-                                </Button>
-                            </span>
-                        </Tooltip>
                         <Button
                             variant="text" color="inherit"
                             disabled={actionsDisabled}
@@ -270,34 +276,33 @@ export default function AdminUsersTab() {
                         >
                             REMOVE ADMIN
                         </Button>
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<CheckIcon />} sx={{ fontWeight: "bold" }}>
-                                    ACTIVE
-                                </Button>
-                            </span>
-                        </Tooltip>
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<BlockIcon />} sx={{ fontWeight: "bold" }}>
-                                    DEACTIVATE
-                                </Button>
-                            </span>
-                        </Tooltip>
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<AssignmentIcon />} sx={{ fontWeight: "bold" }}>
-                                    TASKS
-                                </Button>
-                            </span>
-                        </Tooltip>
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<LaunchIcon />} sx={{ fontWeight: "bold" }}>
-                                    PROJECTS
-                                </Button>
-                            </span>
-                        </Tooltip>
+                        <Button
+                            variant="text" color="error"
+                            disabled={actionsDisabled}
+                            onClick={handleDeleteUsers}
+                            startIcon={<DeleteIcon />}
+                            sx={{ fontWeight: "bold" }}
+                        >
+                            DELETE
+                        </Button>
+                        <Button
+                            variant="text" color="inherit"
+                            disabled={actionsDisabled}
+                            onClick={() => openFilteredTab("tasks")}
+                            startIcon={<AssignmentIcon />}
+                            sx={{ fontWeight: "bold" }}
+                        >
+                            TASKS
+                        </Button>
+                        <Button
+                            variant="text" color="inherit"
+                            disabled={actionsDisabled}
+                            onClick={() => openFilteredTab("projects")}
+                            startIcon={<LaunchIcon />}
+                            sx={{ fontWeight: "bold" }}
+                        >
+                            PROJECTS
+                        </Button>
                     </Stack>
                 </Box>
 
@@ -327,6 +332,15 @@ export default function AdminUsersTab() {
                     />
                 </Box>
             </Paper>
+
+            <CreateUserModal
+                open={createOpen}
+                onClose={() => setCreateOpen(false)}
+                onCreated={() => {
+                    refetchUsers();
+                    showSnackbar("User created. A validation email has been sent to confirm their address.", "success");
+                }}
+            />
 
             <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={closeSnackbar} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
                 <Alert onClose={closeSnackbar} severity={snackbar.severity} variant="filled" sx={{ width: "100%" }}>
