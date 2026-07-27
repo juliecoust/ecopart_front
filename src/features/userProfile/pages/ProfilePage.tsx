@@ -65,6 +65,9 @@ import {
     unlinkEcoTaxaAccount, // API call for unlinking
     type EcoTaxaAccountLink // Type
 } from "../api/profile.api";
+// Admin-only single-user lookup: the settings page can edit another account when
+// the logged-in user is an admin (/settings/:userId/...).
+import { getUserById } from "@/features/admin/api/adminUsers.api";
 import { User } from "@/features/auth/types/user";
 import { ecotaxaColors } from "@/theme";
 
@@ -88,24 +91,40 @@ export default function ProfilePage() {
     // Initialize the location hook
     const location = useLocation();
 
-    // Get setUser to update profile locally, and clearUser for deletion
-    const { setUser, clearUser } = useAuthStore();
+    // authUser is the logged-in user (drives permissions & self-detection);
+    // setUser keeps the store in sync after editing one's own profile.
+    const { user: authUser, setUser, clearUser } = useAuthStore();
 
-    // The active tab is driven by the URL slug (/settings/:tabName).
+    // Canonical URL is /settings/:userId/:tabName. For backward compatibility we
+    // also accept /settings/:tabName (no id): a non-numeric first segment is the
+    // tab slug, and the target user defaults to the logged-in user.
+    const { userId: userIdParam, tabName: tabNameParam } = useParams<{ userId?: string; tabName?: string }>();
+    const firstSegmentIsNumeric = userIdParam != null && /^\d+$/.test(userIdParam);
+    const routeUserId = firstSegmentIsNumeric ? Number(userIdParam) : null;
+    const tabName = firstSegmentIsNumeric ? tabNameParam : (userIdParam ?? tabNameParam);
+
+    // The active tab is driven by the URL slug.
     // Falls back to the legacy `location.state.activeTab`, then to tab 0.
-    const { tabName } = useParams<{ tabName?: string }>();
     const TAB_SLUGS = ["ecopart_account", "ecotaxa_account"] as const;
     const slugIndex = tabName ? TAB_SLUGS.indexOf(tabName as typeof TAB_SLUGS[number]) : -1;
     const stateTab = typeof location.state?.activeTab === "number" ? location.state.activeTab : -1;
     const tabValue = slugIndex >= 0 ? slugIndex : (stateTab >= 0 ? stateTab : 0);
 
     const handleTabChange = (_e: SyntheticEvent, newValue: number) => {
-        navigate(`/settings/${TAB_SLUGS[newValue] ?? TAB_SLUGS[0]}`);
+        const slug = TAB_SLUGS[newValue] ?? TAB_SLUGS[0];
+        // Keep the account id in the URL (falls back to the logged-in user's id
+        // for the legacy no-id form).
+        const idForUrl = routeUserId ?? authUser?.user_id;
+        navigate(idForUrl != null ? `/settings/${idForUrl}/${slug}` : `/settings/${slug}`);
     };
 
     const [loadingUser, setLoadingUser] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     // --- STATES: PROFILE ---
+    // `currentUser` = logged-in user; `user` = the account being edited (they
+    // differ only when an admin edits someone else via /settings/:userId/...).
+    const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [user, setUserData] = useState<User | null>(null);
     const [firstName, setFirstName] = useState("");
     const [lastName, setLastName] = useState("");
@@ -173,32 +192,59 @@ export default function ProfilePage() {
     // --- INITIAL LOAD ---
     useEffect(() => {
         const loadUserData = async () => {
+            setLoadingUser(true);
+            setLoadError(null);
             try {
-                const userData = await fetchMe();
-                setUserData(userData);
+                // Always resolve the logged-in user first (permissions + self check).
+                const me = await fetchMe();
+                setCurrentUser(me);
 
-                setFirstName(userData.first_name || "");
-                setLastName(userData.last_name || "");
-                setEmail(userData.email || "");
-                setOrganisation(userData.organisation || "");
-                const code = userData.country ? userData.country.toUpperCase() : "";
+                // Decide which account to edit. Defaults to self; an id in the URL
+                // targets another account (admins only — others are redirected).
+                let target: User = me;
+                if (routeUserId != null && routeUserId !== me.user_id) {
+                    if (!me.is_admin) {
+                        navigate(`/settings/${me.user_id}/ecopart_account`, { replace: true });
+                        return;
+                    }
+                    const fetched = await getUserById(routeUserId);
+                    if (!fetched) {
+                        setLoadError(`No user found with id ${routeUserId}.`);
+                        setUserData(null);
+                        return;
+                    }
+                    // AdminUser is a structural superset of User.
+                    target = fetched as User;
+                }
+
+                setUserData(target);
+                setFirstName(target.first_name || "");
+                setLastName(target.last_name || "");
+                setEmail(target.email || "");
+                setOrganisation(target.organisation || "");
+                const code = target.country ? target.country.toUpperCase() : "";
                 const isValidCode = countryOptions.some((c) => c.code === code);
                 setCountryCode(isValidCode ? code : "");
-                setPlannedUsage(userData.user_planned_usage || "");
-                setIsAdmin(!!userData.is_admin);
+                setPlannedUsage(target.user_planned_usage || "");
+                setIsAdmin(!!target.is_admin);
 
-                // Load connected accounts immediately when profile loads
-                fetchLinkedAccounts(userData.user_id);
+                // Load connected accounts for the account being edited.
+                fetchLinkedAccounts(target.user_id);
 
             } catch (error) {
                 console.error("Failed to load user", error);
+                setLoadError("Failed to load account.");
             } finally {
                 setLoadingUser(false);
             }
         };
 
         loadUserData();
-    }, [countryOptions, fetchLinkedAccounts]);
+    }, [countryOptions, fetchLinkedAccounts, routeUserId, navigate]);
+
+    // Whether the account being edited is the logged-in user (vs an admin editing
+    // someone else). Password change and store-sync only apply to one's own account.
+    const isEditingSelf = !!currentUser && !!user && currentUser.user_id === user.user_id;
 
     const getDaysLeft = (expirationDate: string) => {
         if (!expirationDate) return 0;
@@ -231,10 +277,13 @@ export default function ProfilePage() {
                 first_name: firstName, last_name: lastName, organisation, country: countryCode, user_planned_usage: plannedUsage,
             };
             // Only admins can change the admin flag; include it only then.
-            if (user.is_admin) payload.is_admin = isAdmin;
+            if (currentUser?.is_admin) payload.is_admin = isAdmin;
             const updatedProfileData = await updateProfile(user.user_id, payload);
             const mergedUser = { ...user, ...updatedProfileData };
-            setUserData(mergedUser); setUser(mergedUser); // keep TopBar Admin link in sync
+            setUserData(mergedUser);
+            // Only sync the auth store when editing one's OWN account — an admin
+            // editing another user must not overwrite their own identity.
+            if (isEditingSelf) setUser(mergedUser); // keep TopBar Admin link in sync
             setProfileMessage({ type: "success", text: "Profile updated successfully." });
         } catch (err) {
             console.error(err);
@@ -268,8 +317,15 @@ export default function ProfilePage() {
         if (!user) return;
         setDeleteError(null);
         try {
-            await deleteAccount(user.user_id); clearUser();
-            navigate("/login", { state: { successMessage: "Your account has been successfully deleted." } });
+            await deleteAccount(user.user_id);
+            if (isEditingSelf) {
+                // Deleting one's own account logs out and returns to login.
+                clearUser();
+                navigate("/login", { state: { successMessage: "Your account has been successfully deleted." } });
+            } else {
+                // An admin deleted someone else's account — return to the users list.
+                navigate("/admin/users");
+            }
         } catch (err) {
             console.error(err);
             setDeleteError("Failed to delete account. Please try again or contact support.");
@@ -363,6 +419,10 @@ export default function ProfilePage() {
 
                 <Typography variant="h4" sx={{ mb: 2 }}>Settings</Typography>
 
+                {loadError && (
+                    <Alert severity="error" sx={{ mb: 3 }}>{loadError}</Alert>
+                )}
+
                 <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
                     <Tabs value={tabValue} onChange={handleTabChange}>
                         <Tab icon={<PersonIcon />} iconPosition="start" label="ECOPART ACCOUNT" />
@@ -375,8 +435,10 @@ export default function ProfilePage() {
                     <>
                         <Paper variant="outlined" sx={{ p: 3, mb: 4 }}>
                             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                                <Typography variant="h6">Profile</Typography>
-                                {user?.is_admin && (
+                                <Typography variant="h6">
+                                    {isEditingSelf ? "Profile" : `Edit user #${user?.user_id}`}
+                                </Typography>
+                                {currentUser?.is_admin && (
                                     <Button variant="contained" color="primary" size="small" startIcon={<AdminPanelSettingsIcon />} onClick={() => navigate('/admin')}>ADMIN DASHBOARD</Button>
                                 )}
                             </Stack>
@@ -447,7 +509,7 @@ export default function ProfilePage() {
                                         helperText="Describe briefly how you plan to use the data."
                                     />
                                 </Grid>
-                                {user?.is_admin && (
+                                {currentUser?.is_admin && (
                                     <Grid size={{ xs: 12 }}>
                                         <FormControlLabel
                                             control={<Checkbox checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} />}
@@ -474,6 +536,10 @@ export default function ProfilePage() {
                             </Box>
                         </Paper>
 
+                        {/* Password change requires the account's current password, so it
+                            is only available when editing your own account. */}
+                        {isEditingSelf && (
+                        <>
                         <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>
                             Security
                         </Typography>
@@ -541,6 +607,8 @@ export default function ProfilePage() {
                                 </Button>
                             </Box>
                         </Paper>
+                        </>
+                        )}
 
                         {/* --- SECTION: DELETE ACCOUNT --- */}
                         <Paper variant="outlined" sx={{ p: 3 }}>
@@ -556,9 +624,13 @@ export default function ProfilePage() {
                             )}
 
                             <Typography variant="body2" color="text.secondary" paragraph>
-                                Your account will be deactivated. You will not be able to connect to EcoPart anymore.
-                                Please transfer access permissions for any projects you manage before deleting your account.
-                                To completely delete your account, please send an email to contact@ecopart.fr
+                                {isEditingSelf
+                                    ? "Your account will be deactivated. You will not be able to connect to EcoPart anymore. " +
+                                      "Please transfer access permissions for any projects you manage before deleting your account. " +
+                                      "To completely delete your account, please send an email to contact@ecopart.fr"
+                                    : "This account will be deactivated and the user will no longer be able to connect to EcoPart. " +
+                                      "Please transfer access permissions for any projects they manage first. " +
+                                      "To completely delete the account, please send an email to contact@ecopart.fr"}
                             </Typography>
 
                             <Button
@@ -670,7 +742,11 @@ export default function ProfilePage() {
                 <Dialog open={openDeleteDialog} onClose={() => setOpenDeleteDialog(false)}>
                     <DialogTitle>Delete Account?</DialogTitle>
                     <DialogContent>
-                        <DialogContentText>Are you sure you want to delete your account? This action cannot be undone.</DialogContentText>
+                        <DialogContentText>
+                            {isEditingSelf
+                                ? "Are you sure you want to delete your account? This action cannot be undone."
+                                : `Are you sure you want to delete the account of ${user?.first_name ?? ""} ${user?.last_name ?? ""} (#${user?.user_id})? This action cannot be undone.`}
+                        </DialogContentText>
                     </DialogContent>
                     <DialogActions>
                         <Button onClick={() => setOpenDeleteDialog(false)}>Cancel</Button>

@@ -54,7 +54,10 @@ export const router = createBrowserRouter([
         element: <ValidateEmailPage />,
     },
     {
-        path: "/settings/:tabName?",
+        // Canonical form is /settings/:userId/:tabName. The legacy /settings/:tabName
+        // (no id) is still accepted — ProfilePage disambiguates a numeric first
+        // segment (a user id) from a tab slug and defaults to the logged-in user.
+        path: "/settings/:userId?/:tabName?",
         element: (
             <ProtectedRoute>
                 <ProfilePage />

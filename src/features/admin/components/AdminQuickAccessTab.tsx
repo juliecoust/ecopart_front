@@ -1,5 +1,5 @@
 import {
-    Box, Typography, Button, TextField, MenuItem,
+    Box, Typography, TextField, MenuItem,
     Alert, Stack, Paper, Skeleton, Link, Divider,
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
@@ -8,9 +8,6 @@ import ViewModuleIcon from "@mui/icons-material/ViewModule";
 import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import ListAltIcon from "@mui/icons-material/ListAlt";
-import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
-
-import { useNavigate } from "react-router-dom";
 
 import SectionCard from "@/shared/components/SectionCard";
 import { QUICK_ACCESS_PERIODS, useAdminQuickAccess } from "../hooks/useAdminQuickAccess";
@@ -69,7 +66,6 @@ const StatCard = ({ label, value, loading, color, icon }: StatCardProps) => (
 const USEFUL_LINKS: { label: string; href: string }[] = [
     { label: "Docker administration", href: "https://hub.docker.com/r/ecotaxa/ecopart_front" },
     { label: "Specifications", href: "https://github.com/ecotaxa/ecopart_front#readme" },
-    { label: "GitHub repository", href: "https://github.com/ecotaxa/ecopart_front" },
 ];
 
 /**
@@ -80,7 +76,6 @@ const USEFUL_LINKS: { label: string; href: string }[] = [
  * useful external links from the mockup.
  */
 export default function AdminQuickAccessTab() {
-    const navigate = useNavigate();
     const { stats, loading, error, period, setPeriod } = useAdminQuickAccess();
 
     return (
@@ -140,24 +135,6 @@ export default function AdminQuickAccessTab() {
                     </Grid>
                 </Grid>
 
-                {/* ADMIN SHORTCUTS */}
-                <Stack spacing={1.5} sx={{ alignItems: "flex-start", mb: 4 }}>
-                    <Button
-                        variant="outlined"
-                        endIcon={<ArrowForwardIcon />}
-                        onClick={() => navigate("/admin/projects")}
-                    >
-                        See all <Box component="span" sx={{ fontWeight: 700, mx: 0.5 }}>projects</Box> as administrator
-                    </Button>
-                    <Button
-                        variant="outlined"
-                        endIcon={<ArrowForwardIcon />}
-                        onClick={() => navigate("/admin/tasks")}
-                    >
-                        See all <Box component="span" sx={{ fontWeight: 700, mx: 0.5 }}>tasks</Box> as administrator
-                    </Button>
-                </Stack>
-
                 {/* USEFUL LINKS */}
                 <Box>
                     <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
@@ -176,6 +153,33 @@ export default function AdminQuickAccessTab() {
                                 {link.label}
                             </Link>
                         ))}
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                            <Typography component="span" variant="body2">
+                                <span>GitHub repository </span>
+                                <Link
+                                    href="https://github.com/ecotaxa/ecopart_front"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    underline="hover"
+                                    color="primary"
+                                >
+                                    <span>FRONT</span>
+                                </Link>
+                                <Typography component="span" variant="body2">
+                                    <span> et </span>
+                                </Typography>
+                                <Link
+                                    href="https://github.com/ecotaxa/ecopart_back"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    underline="hover"
+                                    color="primary"
+                                >
+                                    <span>BACK</span>
+                                </Link>
+                            </Typography>
+
+                        </Box>
                     </Stack>
                 </Box>
 

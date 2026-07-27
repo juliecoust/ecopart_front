@@ -10,6 +10,10 @@ import {
     deleteProject,
 } from "@/features/projects/api/projects.api";
 
+// Stable default so callers that pass no extra filters don't get a fresh array
+// reference every render (which would make `fetchProjects` unstable → refetch loop).
+const NO_EXTRA_FILTERS: SearchFilter[] = [];
+
 /**
  * Hook backing the admin PROJECTS tab.
  *
@@ -21,8 +25,13 @@ import {
  * default, so an admin sees EVERY project. Rows are enriched with their sample
  * totals the same way (one lightweight samples search per row), and it adds the
  * `handleDeleteProjects` bulk action (DELETE /projects/:id/).
+ *
+ * `extraFilters` are merged into every request on top of the attribute search —
+ * used to pre-scope the list to a set of user ids (granted_users → projects where
+ * the user is manager OR member) when opened from the admin USERS tab. Callers
+ * must memoize the array so it stays referentially stable across renders.
  */
-export const useAdminProjectsTable = () => {
+export const useAdminProjectsTable = (extraFilters: SearchFilter[] = NO_EXTRA_FILTERS) => {
     const createEmptySelectionModel = (): GridRowSelectionModel => ({ type: "include", ids: new Set() });
 
     const getSelectionCount = (selectionModel: GridRowSelectionModel, totalCount: number): number => {
@@ -81,7 +90,7 @@ export const useAdminProjectsTable = () => {
 
     useEffect(() => {
         setPaginationModel((prev) => ({ ...prev, page: 0 }));
-    }, [debouncedSearchText, searchAttribute]);
+    }, [debouncedSearchText, searchAttribute, extraFilters]);
 
     // Backfill each project with its server sample total. The project-search
     // endpoint does not return a count, so we ask the samples search endpoint for
@@ -136,7 +145,7 @@ export const useAdminProjectsTable = () => {
                 page: paginationModel.page + 1,
                 limit: paginationModel.pageSize,
                 sort_by: "desc(project_id)",
-                filters,
+                filters: [...filters, ...extraFilters],
             });
 
             // Render rows immediately, then backfill the sample counts.
@@ -151,7 +160,7 @@ export const useAdminProjectsTable = () => {
         } finally {
             setLoading(false);
         }
-    }, [paginationModel.page, paginationModel.pageSize, debouncedSearchText, searchAttribute, enrichWithSampleCounts]);
+    }, [paginationModel.page, paginationModel.pageSize, debouncedSearchText, searchAttribute, extraFilters, enrichWithSampleCounts]);
 
     useEffect(() => {
         fetchProjects();

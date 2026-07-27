@@ -4,6 +4,10 @@ import { GridPaginationModel, GridRowSelectionModel } from "@mui/x-data-grid";
 
 import { deleteProjectTask, downloadTaskFile, SearchFilter, searchProjectTasks, Task } from "../api/projects.api";
 
+// Stable default so callers that pass no extra filters don't get a fresh array
+// reference every render (which would make `fetchTasks` unstable → refetch loop).
+const NO_EXTRA_FILTERS: SearchFilter[] = [];
+
 /**
  * Hook backing the global Tasks page (`/tasks`).
  *
@@ -11,8 +15,13 @@ import { deleteProjectTask, downloadTaskFile, SearchFilter, searchProjectTasks, 
  * it calls `searchProjectTasks` WITHOUT `projectId` and WITHOUT a `for_managing`
  * filter, so the backend's own `applyUserCanGetFilter` restricts the result to
  * tasks of the projects the current user has access to (admins see everything).
+ *
+ * `extraFilters` are merged into every request on top of the attribute search —
+ * used by the admin TASKS tab to pre-scope the list to a set of user ids
+ * (task_owner_id) when opened from the USERS tab. Callers must memoize the array
+ * so it stays referentially stable across renders.
  */
-export const useTasksTable = () => {
+export const useTasksTable = (extraFilters: SearchFilter[] = NO_EXTRA_FILTERS) => {
     const createEmptySelectionModel = (): GridRowSelectionModel => ({ type: "include", ids: new Set() });
 
     const getSelectionCount = (selectionModel: GridRowSelectionModel, totalCount: number): number => {
@@ -67,7 +76,7 @@ export const useTasksTable = () => {
 
     useEffect(() => {
         setPaginationModel((prev) => ({ ...prev, page: 0 }));
-    }, [debouncedSearchText, searchAttribute]);
+    }, [debouncedSearchText, searchAttribute, extraFilters]);
 
     const fetchTasks = useCallback(async () => {
         setLoading(true);
@@ -94,7 +103,7 @@ export const useTasksTable = () => {
                 page: paginationModel.page + 1,
                 limit: paginationModel.pageSize,
                 sort_by: "desc(task_id)",
-                filters,
+                filters: [...filters, ...extraFilters],
             });
 
             setTasks(response.tasks || []);
@@ -107,7 +116,7 @@ export const useTasksTable = () => {
         } finally {
             setLoading(false);
         }
-    }, [paginationModel.page, paginationModel.pageSize, debouncedSearchText, searchAttribute]);
+    }, [paginationModel.page, paginationModel.pageSize, debouncedSearchText, searchAttribute, extraFilters]);
 
     useEffect(() => {
         fetchTasks();

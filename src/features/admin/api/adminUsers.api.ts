@@ -7,8 +7,9 @@ import type { SearchFilter } from "@/features/projects/api/projects.api";
  * For an admin caller the backend returns the full `UserResponseModel`
  * (see ecopart_back search-users.ts → adminGetUsers), so `valid_email` and
  * `deleted` are present and drive the account-status column. `manager_count`
- * and `member_count` are NOT part of the user model — the mockup shows them but
- * no endpoint exposes per-user project counts yet, so they stay optional.
+ * and `member_count` are NOT part of the user model — the USERS tab derives them
+ * client-side via `countProjectsForUser` (projects search by managers/members),
+ * so they stay optional and are filled in once that lookup resolves.
  */
 export interface AdminUser {
     user_id: number;
@@ -73,4 +74,29 @@ export async function setUserAdmin(userId: number, isAdmin: boolean): Promise<Ad
         method: "PATCH",
         body: JSON.stringify({ is_admin: isAdmin }),
     });
+}
+
+/**
+ * Delete (deactivate) a user account — the same endpoint the profile page's
+ * "Delete account" button hits, but targeting an arbitrary user id.
+ * Route: DELETE /users/:user_id/
+ */
+export async function deleteUser(userId: number): Promise<void> {
+    return http<void>(`/users/${userId}/`, {
+        method: "DELETE",
+    });
+}
+
+/**
+ * Fetch a single user by id. The backend has no GET /users/:id, so we go through
+ * the admin search endpoint with an exact user_id filter. Used by the settings
+ * page when an admin edits someone else's account.
+ */
+export async function getUserById(userId: number): Promise<AdminUser | null> {
+    const response = await searchUsers({
+        page: 1,
+        limit: 1,
+        filters: [{ field: "user_id", operator: "=", value: userId }],
+    });
+    return response.users?.[0] ?? null;
 }

@@ -84,6 +84,14 @@ export const handlers = [
         });
     }),
 
+    // --- MOCK PROJECTS SEARCH (default) ---
+    // The admin USERS tab derives per-user manager/member counts by searching
+    // projects with a managers/members filter. A quiet default keeps unrelated
+    // tests from hitting the network; tests that assert on it override via server.use.
+    http.post('*/projects/searches*', () => {
+        return HttpResponse.json({ search_info: { total: 0, page: 1, limit: 1 }, projects: [] });
+    }),
+
     // --- MOCK RESET PASSWORD REQUEST ---
     http.post('*/auth/password/reset', async () => {
         // We simulate a slight delay for realism

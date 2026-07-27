@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
     Box, Typography, Button, TextField, MenuItem,
     Snackbar, Alert, Stack, IconButton, Tooltip, Paper, Chip
@@ -12,17 +13,30 @@ import GroupRemoveIcon from "@mui/icons-material/GroupRemove";
 import AssignmentIcon from "@mui/icons-material/Assignment";
 import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
 
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 
-import { MinimalUserModel, Project } from "@/features/projects/api/projects.api";
+import { MinimalUserModel, Project, SearchFilter } from "@/features/projects/api/projects.api";
 import { useAdminProjectsTable } from "../hooks/useAdminProjectsTable";
+import { parseUserIdsParam } from "../utils/userFilterParams";
 
 /** Comma-separated user names for a privilege array; "—" when empty. */
 const renderPeopleCell = (users: MinimalUserModel[] | undefined) => {
     const names = (users ?? [])
-        .map((user) => user.user_name)
-        .filter((name): name is string => Boolean(name && name.trim()));
+        .map((user) => {
+            // The backend builds user_name from the user's first/last name and can
+            // return "undefined undefined" / "null null" when those are missing.
+            // Strip those tokens, then fall back to the email, then a "#id" label,
+            // so a nameless account never renders as "undefined undefined" or blank.
+            const cleaned = user.user_name
+                ?.replace(/\b(?:undefined|null)\b/g, "")
+                .replace(/\s+/g, " ")
+                .trim();
+            if (cleaned) return cleaned;
+            if (user.email?.trim()) return user.email.trim();
+            return user.user_id != null ? `#${user.user_id}` : "";
+        })
+        .filter((name): name is string => Boolean(name));
 
     if (names.length === 0) {
         return <Typography variant="caption" color="text.secondary">—</Typography>;
@@ -46,6 +60,25 @@ const renderPeopleCell = (users: MinimalUserModel[] | undefined) => {
  */
 export default function AdminProjectsTab() {
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+
+    // When opened from the USERS tab (?users=1,2,3), scope the list to projects
+    // where those users are manager OR member (backend `granted_users` filter).
+    const userIds = useMemo(() => parseUserIdsParam(searchParams.get("users")), [searchParams]);
+    const extraFilters = useMemo<SearchFilter[]>(() => {
+        if (userIds.length === 0) return [];
+        return [
+            userIds.length === 1
+                ? { field: "granted_users", operator: "=", value: userIds[0] }
+                : { field: "granted_users", operator: "IN", value: userIds },
+        ];
+    }, [userIds]);
+
+    const clearUserFilter = () => {
+        const next = new URLSearchParams(searchParams);
+        next.delete("users");
+        setSearchParams(next, { replace: true });
+    };
 
     const {
         projects, loading, totalRows, error,
@@ -56,7 +89,7 @@ export default function AdminProjectsTab() {
         isActionRunning,
         handleDeleteProjects,
         snackbar, closeSnackbar
-    } = useAdminProjectsTable();
+    } = useAdminProjectsTable(extraFilters);
 
     const columns: GridColDef<Project>[] = [
         { field: "project_id", headerName: "ID", width: 80 },
@@ -187,6 +220,18 @@ export default function AdminProjectsTab() {
                                 </IconButton>
                             </span>
                         </Tooltip>
+                        {userIds.length > 0 && (
+                            <Chip
+                                color="primary"
+                                variant="outlined"
+                                onDelete={clearUserFilter}
+                                label={
+                                    userIds.length === 1
+                                        ? `User #${userIds[0]}`
+                                        : `${userIds.length} users`
+                                }
+                            />
+                        )}
                         <Box sx={{ flexGrow: 1 }} />
                         <Button
                             variant="contained"
