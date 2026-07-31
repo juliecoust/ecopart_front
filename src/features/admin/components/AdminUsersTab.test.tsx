@@ -415,6 +415,54 @@ describe('AdminUsersTab', () => {
         expect(await screen.findByText('5')).toBeInTheDocument();
     });
 
+    it('TC-AF22: resolves ?project= to the projects\' member + manager ids and filters the user search', async () => {
+        // The user search has no project filter, so the tab first resolves the
+        // project(s) to their privileged user ids via POST /projects/searches
+        // (field project_id), then filters the user list by user_id IN [...].
+        server.use(
+            http.post('*/projects/searches', async ({ request }) => {
+                const filters = (await request.json()) as Array<{ field: string }>;
+                if (filters[0]?.field === 'project_id') {
+                    return HttpResponse.json({
+                        search_info: { total: 1, page: 1, limit: 1 },
+                        projects: [{
+                            project_id: 41,
+                            managers: [{ user_id: 10 }],
+                            members: [{ user_id: 20 }, { user_id: 30 }],
+                        }],
+                    });
+                }
+                // The unrelated manager / member count enrichment (managers / members filter).
+                return HttpResponse.json({ search_info: { total: 0, page: 1, limit: 1 }, projects: [] });
+            }),
+        );
+        mockUsersSearch([makeUser({ user_id: 10 })], 1);
+
+        renderWithRouter(<><AdminUsersTab /><LocationProbe /></>, { route: '/admin/users?project=41' });
+        await screen.findByText('John Doe');
+
+        await waitFor(() => {
+            expect(searchCalls[searchCalls.length - 1]?.filters).toEqual([
+                { field: 'user_id', operator: 'IN', value: [10, 20, 30] },
+            ]);
+        });
+        expect(screen.getByText('Members of project #41')).toBeInTheDocument();
+    });
+
+    it('TC-AF23: scopes the user search by user_id and shows a chip when opened with ?owner= (from the TASKS tab)', async () => {
+        mockUsersSearch([makeUser({ user_id: 11 })], 1);
+
+        renderWithRouter(<><AdminUsersTab /><LocationProbe /></>, { route: '/admin/users?owner=11,22' });
+        await screen.findByText('John Doe');
+
+        await waitFor(() => {
+            expect(searchCalls[searchCalls.length - 1]?.filters).toEqual([
+                { field: 'user_id', operator: 'IN', value: [11, 22] },
+            ]);
+        });
+        expect(screen.getByText('2 task owners')).toBeInTheDocument();
+    });
+
     it('TC-AF16: keeps only the failed users selected when some admin updates fail', async () => {
         const user = userEvent.setup();
         vi.spyOn(window, 'confirm').mockReturnValue(true);

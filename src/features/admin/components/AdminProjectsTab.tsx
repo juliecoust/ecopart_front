@@ -5,11 +5,8 @@ import {
 } from "@mui/material";
 
 import FilterListIcon from "@mui/icons-material/FilterList";
-import AddIcon from "@mui/icons-material/Add";
 import CloseIcon from "@mui/icons-material/Close";
-import PersonRemoveIcon from "@mui/icons-material/PersonRemove";
 import InfoTooltip from "@/shared/components/InfoTooltip";
-import GroupRemoveIcon from "@mui/icons-material/GroupRemove";
 import AssignmentIcon from "@mui/icons-material/Assignment";
 import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
 
@@ -54,9 +51,9 @@ const renderPeopleCell = (users: MinimalUserModel[] | undefined) => {
  *
  * Lists EVERY project (the admin scope, unlike the user-facing "My projects"
  * page) with server-side search + pagination through `useAdminProjectsTable`.
- * The only wired bulk action is DELETE; the REMOVE ALL MANAGER / MEMBERS and
- * the TASKS / USERS shortcuts from the mockup have no backend endpoint yet and
- * stay disabled, matching the AdminUsersTab / AdminTasksTab convention.
+ * Bulk actions: DELETE, plus the TASKS / USERS shortcuts that jump to the
+ * matching admin tab pre-scoped to the selected project(s) — mirroring the
+ * USERS tab's TASKS / PROJECTS shortcuts.
  */
 export default function AdminProjectsTab() {
     const navigate = useNavigate();
@@ -65,31 +62,50 @@ export default function AdminProjectsTab() {
     // When opened from the USERS tab (?users=1,2,3), scope the list to projects
     // where those users are manager OR member (backend `granted_users` filter).
     const userIds = useMemo(() => parseUserIdsParam(searchParams.get("users")), [searchParams]);
+    // When opened from the TASKS tab (?project=1,2,3), scope the list to those
+    // projects directly (the projects the selected task(s) belong to).
+    const projectIds = useMemo(() => parseUserIdsParam(searchParams.get("project")), [searchParams]);
     const extraFilters = useMemo<SearchFilter[]>(() => {
-        if (userIds.length === 0) return [];
-        return [
-            userIds.length === 1
+        const filters: SearchFilter[] = [];
+        if (userIds.length > 0) {
+            filters.push(userIds.length === 1
                 ? { field: "granted_users", operator: "=", value: userIds[0] }
-                : { field: "granted_users", operator: "IN", value: userIds },
-        ];
-    }, [userIds]);
+                : { field: "granted_users", operator: "IN", value: userIds });
+        }
+        if (projectIds.length > 0) {
+            filters.push(projectIds.length === 1
+                ? { field: "project_id", operator: "=", value: projectIds[0] }
+                : { field: "project_id", operator: "IN", value: projectIds });
+        }
+        return filters;
+    }, [userIds, projectIds]);
 
-    const clearUserFilter = () => {
+    const clearFilter = (key: "users" | "project") => {
         const next = new URLSearchParams(searchParams);
-        next.delete("users");
+        next.delete(key);
         setSearchParams(next, { replace: true });
     };
 
     const {
         projects, loading, totalRows, error,
         paginationModel, setPaginationModel,
-        selectedProjects, setSelectedProjects, selectionCount,
+        selectedProjects, setSelectedProjects, selectedProjectIds, selectionCount,
         searchText, setSearchText,
         searchAttribute, setSearchAttribute,
         isActionRunning,
         handleDeleteProjects,
         snackbar, closeSnackbar
     } = useAdminProjectsTable(extraFilters);
+
+    // TASKS / USERS bulk shortcuts: jump to the matching admin tab, scoped to the
+    // selected project(s). The target tab reads the `?project=` query param and
+    // applies the filter (task_project_id for tasks; for users it resolves the
+    // projects to their manager + member user ids since the user search has no
+    // project filter).
+    const openFilteredTab = (tab: "tasks" | "users") => {
+        if (selectedProjectIds.length === 0) return;
+        navigate(`/admin/${tab}?project=${selectedProjectIds.join(",")}`);
+    };
 
     const columns: GridColDef<Project>[] = [
         { field: "project_id", headerName: "ID", width: 80 },
@@ -224,7 +240,7 @@ export default function AdminProjectsTab() {
                             <Chip
                                 color="primary"
                                 variant="outlined"
-                                onDelete={clearUserFilter}
+                                onDelete={() => clearFilter("users")}
                                 label={
                                     userIds.length === 1
                                         ? `User #${userIds[0]}`
@@ -232,15 +248,18 @@ export default function AdminProjectsTab() {
                                 }
                             />
                         )}
-                        <Box sx={{ flexGrow: 1 }} />
-                        <Button
-                            variant="contained"
-                            startIcon={<AddIcon />}
-                            onClick={() => navigate("/new-project")}
-                            sx={{ whiteSpace: "nowrap" }}
-                        >
-                            NEW PROJECT
-                        </Button>
+                        {projectIds.length > 0 && (
+                            <Chip
+                                color="primary"
+                                variant="outlined"
+                                onDelete={() => clearFilter("project")}
+                                label={
+                                    projectIds.length === 1
+                                        ? `Project #${projectIds[0]}`
+                                        : `${projectIds.length} projects`
+                                }
+                            />
+                        )}
                     </Stack>
                 </Box>
 
@@ -252,7 +271,8 @@ export default function AdminProjectsTab() {
                             title={
                                 <Typography variant="caption" component="p">
                                     DELETE permanently deletes the selected projects, including their samples and any
-                                    linked EcoTaxa project. This cannot be undone.
+                                    linked EcoTaxa project (this cannot be undone). TASKS / USERS open the matching admin
+                                    tab filtered to the selected project(s).
                                 </Typography>
                             }
                         />
@@ -267,37 +287,26 @@ export default function AdminProjectsTab() {
                         >
                             DELETE
                         </Button>
-                        {/* REMOVE ALL MANAGER / MEMBERS, TASKS and USERS: reserved admin bulk
-                            actions from the mockup. No backend endpoint exists yet, so they stay
-                            disabled like the other not-yet-wired admin actions. */}
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<PersonRemoveIcon />} sx={{ fontWeight: "bold" }}>
-                                    REMOVE ALL MANAGER
-                                </Button>
-                            </span>
-                        </Tooltip>
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<GroupRemoveIcon />} sx={{ fontWeight: "bold" }}>
-                                    REMOVE ALL MEMBERS
-                                </Button>
-                            </span>
-                        </Tooltip>
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<AssignmentIcon />} sx={{ fontWeight: "bold" }}>
-                                    TASKS
-                                </Button>
-                            </span>
-                        </Tooltip>
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<PeopleAltIcon />} sx={{ fontWeight: "bold" }}>
-                                    USERS
-                                </Button>
-                            </span>
-                        </Tooltip>
+                        {/* TASKS / USERS: jump to the matching admin tab, scoped to the
+                            selected project(s). Disabled while nothing is selected. */}
+                        <Button
+                            variant="text" color="inherit"
+                            disabled={actionsDisabled}
+                            onClick={() => openFilteredTab("tasks")}
+                            startIcon={<AssignmentIcon />}
+                            sx={{ fontWeight: "bold" }}
+                        >
+                            TASKS
+                        </Button>
+                        <Button
+                            variant="text" color="inherit"
+                            disabled={actionsDisabled}
+                            onClick={() => openFilteredTab("users")}
+                            startIcon={<PeopleAltIcon />}
+                            sx={{ fontWeight: "bold" }}
+                        >
+                            USERS
+                        </Button>
                     </Stack>
                 </Box>
 

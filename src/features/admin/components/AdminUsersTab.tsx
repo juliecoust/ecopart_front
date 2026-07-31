@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
     Box, Typography, Button, TextField, MenuItem,
-    Snackbar, Alert, Stack, IconButton, Tooltip, Paper
+    Snackbar, Alert, Stack, IconButton, Tooltip, Paper, Chip
 } from "@mui/material";
 
 import AddIcon from "@mui/icons-material/Add";
@@ -16,12 +16,14 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import MailOutlineIcon from "@mui/icons-material/MailOutline";
 import ErrorIcon from "@mui/icons-material/Error";
 
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 
 import { CountriesWrapper } from "@/shared/country-wrapper";
+import { SearchFilter, searchProjects } from "@/features/projects/api/projects.api";
 import { AdminUser } from "../api/adminUsers.api";
 import { useAdminUsersTable } from "../hooks/useAdminUsersTable";
+import { parseUserIdsParam } from "../utils/userFilterParams";
 import CreateUserModal from "./CreateUserModal";
 
 /** Human-readable account status derived from the admin-only user fields. */
@@ -58,7 +60,78 @@ const renderCountCell = (value: number | undefined) =>
 
 export default function AdminUsersTab() {
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [createOpen, setCreateOpen] = useState(false);
+
+    // When opened from the TASKS tab (?owner=1,2,3), scope the list directly to those
+    // task owners (`user_id IN [...]`).
+    const ownerIds = useMemo(() => parseUserIdsParam(searchParams.get("owner")), [searchParams]);
+
+    // When opened from the PROJECTS tab (?project=1,2,3), scope the list to the
+    // members + managers of those project(s). The user search has no project
+    // filter, so we resolve the project ids to their privileged user ids here
+    // (one projects search), then filter the user list by `user_id IN [...]`.
+    const projectIds = useMemo(() => parseUserIdsParam(searchParams.get("project")), [searchParams]);
+    const projectKey = projectIds.join(",");
+    // The resolved user ids, tagged with the project key they were resolved for.
+    // A mismatch (or null) means "still resolving for the current projects".
+    const [projectUsers, setProjectUsers] = useState<{ key: string; ids: number[] } | null>(null);
+
+    useEffect(() => {
+        if (projectIds.length === 0) return;
+
+        const key = projectIds.join(",");
+        let cancelled = false;
+        (async () => {
+            try {
+                const response = await searchProjects({
+                    page: 1,
+                    limit: projectIds.length,
+                    filters: [
+                        projectIds.length === 1
+                            ? { field: "project_id", operator: "=", value: projectIds[0] }
+                            : { field: "project_id", operator: "IN", value: projectIds },
+                    ],
+                });
+                const ids = new Set<number>();
+                response.projects.forEach((project) => {
+                    (project.managers ?? []).forEach((user) => ids.add(user.user_id));
+                    (project.members ?? []).forEach((user) => ids.add(user.user_id));
+                });
+                if (!cancelled) setProjectUsers({ key, ids: Array.from(ids) });
+            } catch (err) {
+                console.error("[Admin Users] Failed to resolve project members", err);
+                if (!cancelled) setProjectUsers({ key, ids: [] });
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [projectIds]);
+
+    const extraFilters = useMemo<SearchFilter[]>(() => {
+        // Both cross-tab sources constrain the same `user_id` column, so we collect
+        // each source's allowed ids and intersect them (only the users satisfying
+        // every active filter).
+        const constraints: number[][] = [];
+        if (ownerIds.length > 0) constraints.push(ownerIds);
+        if (projectIds.length > 0) {
+            // While the resolution is pending for the current projects, or when they have
+            // no members, constrain to an impossible id so the grid shows nothing instead
+            // of flashing every user.
+            const resolved = projectUsers && projectUsers.key === projectKey ? projectUsers.ids : [];
+            constraints.push(resolved.length > 0 ? resolved : [-1]);
+        }
+        if (constraints.length === 0) return [];
+
+        const ids = constraints.reduce((acc, list) => acc.filter((id) => list.includes(id)));
+        return [{ field: "user_id", operator: "IN", value: ids.length > 0 ? ids : [-1] }];
+    }, [ownerIds, projectIds, projectKey, projectUsers]);
+
+    const clearFilter = (key: "owner" | "project") => {
+        const next = new URLSearchParams(searchParams);
+        next.delete(key);
+        setSearchParams(next, { replace: true });
+    };
 
     const {
         users, loading, totalRows, error,
@@ -72,7 +145,7 @@ export default function AdminUsersTab() {
         refetchUsers,
         showSnackbar,
         snackbar, closeSnackbar
-    } = useAdminUsersTable();
+    } = useAdminUsersTable(extraFilters);
 
     // TASKS / PROJECTS bulk shortcuts: jump to the matching admin tab, filtered to
     // the selected user(s). The target tab reads these query params and applies the
@@ -232,6 +305,30 @@ export default function AdminUsersTab() {
                             <MenuItem value="country">Country</MenuItem>
                             <MenuItem value="user_id">User id</MenuItem>
                         </TextField>
+                        {ownerIds.length > 0 && (
+                            <Chip
+                                color="primary"
+                                variant="outlined"
+                                onDelete={() => clearFilter("owner")}
+                                label={
+                                    ownerIds.length === 1
+                                        ? `Task owner #${ownerIds[0]}`
+                                        : `${ownerIds.length} task owners`
+                                }
+                            />
+                        )}
+                        {projectIds.length > 0 && (
+                            <Chip
+                                color="primary"
+                                variant="outlined"
+                                onDelete={() => clearFilter("project")}
+                                label={
+                                    projectIds.length === 1
+                                        ? `Members of project #${projectIds[0]}`
+                                        : `Members of ${projectIds.length} projects`
+                                }
+                            />
+                        )}
                         <Box sx={{ flexGrow: 1 }} />
                         <Button
                             variant="contained"
