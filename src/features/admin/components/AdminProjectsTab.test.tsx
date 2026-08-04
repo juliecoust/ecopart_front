@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLocation } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 
 import AdminProjectsTab from './AdminProjectsTab';
@@ -8,6 +9,12 @@ import { renderWithRouter } from '@/test/utils';
 import { server } from '@/test/msw/server';
 import { loginAsUser } from '@/test/helpers/auth.helpers';
 import type { Project } from '@/features/projects/api/projects.api';
+
+/** Surfaces the current location so navigation-driven actions can be asserted. */
+function LocationProbe() {
+    const location = useLocation();
+    return <div data-testid="location">{location.pathname + location.search}</div>;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers — the admin PROJECTS tab hits POST /projects/searches (list),
@@ -65,7 +72,8 @@ const mockProjectDelete = () => {
     );
 };
 
-const renderProjectsTab = () => renderWithRouter(<AdminProjectsTab />, { route: '/admin/projects' });
+const renderProjectsTab = () =>
+    renderWithRouter(<><AdminProjectsTab /><LocationProbe /></>, { route: '/admin/projects' });
 
 describe('AdminProjectsTab', () => {
     beforeEach(() => {
@@ -259,16 +267,64 @@ describe('AdminProjectsTab', () => {
         expect(screen.getByRole('button', { name: 'DELETE' })).toBeDisabled();
     });
 
-    it('TC-AG11: renders the not-yet-wired actions as disabled', async () => {
+    it('TC-AG11: NEW PROJECT and the REMOVE ALL actions are gone; TASKS / USERS are disabled with no selection', async () => {
         mockProjectsSearch([makeProject({ project_id: 1 })], 1);
 
         renderProjectsTab();
         await screen.findByText('uvp5_sn201_exports02_filtered');
 
-        expect(screen.getByRole('button', { name: 'REMOVE ALL MANAGER' })).toBeDisabled();
-        expect(screen.getByRole('button', { name: 'REMOVE ALL MEMBERS' })).toBeDisabled();
+        // Removed per the admin-section feedback.
+        expect(screen.queryByRole('button', { name: 'NEW PROJECT' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'REMOVE ALL MANAGER' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'REMOVE ALL MEMBERS' })).not.toBeInTheDocument();
+
+        // TASKS / USERS are wired now but disabled until a project is selected.
         expect(screen.getByRole('button', { name: 'TASKS' })).toBeDisabled();
         expect(screen.getByRole('button', { name: 'USERS' })).toBeDisabled();
+    });
+
+    it('TC-AG14: TASKS opens the admin tasks tab filtered by the selected project(s)', async () => {
+        const user = userEvent.setup();
+        mockProjectsSearch([
+            makeProject({ project_id: 41 }),
+            makeProject({ project_id: 42, project_title: 'second_project' }),
+        ], 2);
+
+        renderProjectsTab();
+        await screen.findByText('second_project');
+
+        const checkboxes = screen.getAllByRole('checkbox');
+        await user.click(checkboxes[1]);
+        await user.click(checkboxes[2]);
+
+        await user.click(screen.getByRole('button', { name: 'TASKS' }));
+        expect(screen.getByTestId('location')).toHaveTextContent('/admin/tasks?project=41,42');
+    });
+
+    it('TC-AG15: USERS opens the admin users tab filtered by the selected project', async () => {
+        const user = userEvent.setup();
+        mockProjectsSearch([makeProject({ project_id: 41 })], 1);
+
+        renderProjectsTab();
+        await screen.findByText('uvp5_sn201_exports02_filtered');
+
+        await user.click(screen.getAllByRole('checkbox')[1]);
+        await user.click(screen.getByRole('button', { name: 'USERS' }));
+        expect(screen.getByTestId('location')).toHaveTextContent('/admin/users?project=41');
+    });
+
+    it('TC-AG16: scopes the search by project_id and shows a chip when opened with ?project= (from the TASKS tab)', async () => {
+        mockProjectsSearch([makeProject({ project_id: 41 })], 1);
+
+        renderWithRouter(<><AdminProjectsTab /><LocationProbe /></>, { route: '/admin/projects?project=41,42' });
+        await screen.findByText('uvp5_sn201_exports02_filtered');
+
+        await waitFor(() => {
+            expect(searchCalls[searchCalls.length - 1]?.filters).toEqual([
+                { field: 'project_id', operator: 'IN', value: [41, 42] },
+            ]);
+        });
+        expect(screen.getByText('2 projects')).toBeInTheDocument();
     });
 
     it('TC-AG12: keeps only the failed projects selected when some deletions fail', async () => {

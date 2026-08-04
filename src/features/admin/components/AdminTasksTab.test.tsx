@@ -69,11 +69,24 @@ const LocationProbe = () => {
     );
 };
 
+/** Reflects the current pathname + search so the cross-tab navigation can be asserted. */
+const AdminTabProbe = ({ label }: { label: string }) => {
+    const location = useLocation();
+    return (
+        <div>
+            <h1>{label}</h1>
+            <span data-testid="loc-url">{location.pathname + location.search}</span>
+        </div>
+    );
+};
+
 const renderAdminTasksTab = (route = '/admin/tasks') =>
     renderWithRouter(
         <Routes>
             <Route path="/admin/tasks" element={<AdminTasksTab />} />
             <Route path="/projects/:id/tasks/:taskId" element={<LocationProbe />} />
+            <Route path="/admin/users" element={<AdminTabProbe label="Admin Users Page" />} />
+            <Route path="/admin/projects" element={<AdminTabProbe label="Admin Projects Page" />} />
         </Routes>,
         { route },
     );
@@ -217,7 +230,7 @@ describe('AdminTasksTab', () => {
         expect(screen.getByText('0 items selected')).toBeInTheDocument();
     });
 
-    it('TC-AE8: renders the reserved USERS and PROJECTS bulk actions as disabled', async () => {
+    it('TC-AE8: disables the USERS / PROJECTS bulk actions until a task is selected', async () => {
         mockTasksSearch([makeTask({ task_id: 1 })], 1);
 
         renderAdminTasksTab();
@@ -225,6 +238,79 @@ describe('AdminTasksTab', () => {
 
         expect(screen.getByRole('button', { name: 'USERS' })).toBeDisabled();
         expect(screen.getByRole('button', { name: 'PROJECTS' })).toBeDisabled();
+    });
+
+    it('TC-AE12: USERS opens the users tab scoped to the distinct owners of the selected tasks', async () => {
+        const user = userEvent.setup();
+        mockTasksSearch([
+            makeTask({ task_id: 1, task_type: 'IMPORT', task_owner_id: 11 }),
+            makeTask({ task_id: 2, task_type: 'BACKUP', task_owner_id: 22 }),
+            makeTask({ task_id: 3, task_type: 'EXPORT', task_owner_id: 11 }),
+        ], 3);
+
+        renderAdminTasksTab();
+        await screen.findByText('IMPORT');
+
+        const checkboxes = screen.getAllByRole('checkbox');
+        await user.click(checkboxes[1]);
+        await user.click(checkboxes[2]);
+        await user.click(checkboxes[3]);
+        expect(await screen.findByText('3 items selected')).toBeInTheDocument();
+
+        await user.click(screen.getByRole('button', { name: 'USERS' }));
+
+        expect(await screen.findByRole('heading', { name: 'Admin Users Page' })).toBeInTheDocument();
+        expect(screen.getByTestId('loc-url')).toHaveTextContent('/admin/users?owner=11,22');
+    });
+
+    it('TC-AE13: PROJECTS opens the projects tab scoped to the distinct projects of the selected tasks', async () => {
+        const user = userEvent.setup();
+        mockTasksSearch([
+            makeTask({ task_id: 1, task_type: 'IMPORT', task_project_id: 7 }),
+            makeTask({ task_id: 2, task_type: 'BACKUP', task_project_id: null }),
+        ], 2);
+
+        renderAdminTasksTab();
+        await screen.findByText('IMPORT');
+
+        const checkboxes = screen.getAllByRole('checkbox');
+        await user.click(checkboxes[1]);
+        await user.click(checkboxes[2]);
+        expect(await screen.findByText('2 items selected')).toBeInTheDocument();
+
+        await user.click(screen.getByRole('button', { name: 'PROJECTS' }));
+
+        // The orphan task (no project) is skipped; only project #7 is carried over.
+        expect(await screen.findByRole('heading', { name: 'Admin Projects Page' })).toBeInTheDocument();
+        expect(screen.getByTestId('loc-url')).toHaveTextContent('/admin/projects?project=7');
+    });
+
+    it('TC-AE10: scopes the search by task_project_id and shows a chip when opened with ?project=', async () => {
+        mockTasksSearch([makeTask({ task_id: 1 })], 1);
+
+        renderAdminTasksTab('/admin/tasks?project=41,42');
+        await screen.findByText('IMPORT');
+
+        await waitFor(() => {
+            expect(searchCalls[searchCalls.length - 1]?.filters).toEqual([
+                { field: 'task_project_id', operator: 'IN', value: [41, 42] },
+            ]);
+        });
+        expect(screen.getByText('2 projects')).toBeInTheDocument();
+    });
+
+    it('TC-AE11: uses an exact-match task_project_id filter for a single project', async () => {
+        mockTasksSearch([makeTask({ task_id: 1 })], 1);
+
+        renderAdminTasksTab('/admin/tasks?project=7');
+        await screen.findByText('IMPORT');
+
+        await waitFor(() => {
+            expect(searchCalls[searchCalls.length - 1]?.filters).toEqual([
+                { field: 'task_project_id', operator: '=', value: 7 },
+            ]);
+        });
+        expect(screen.getByText('Project #7')).toBeInTheDocument();
     });
 
     it('TC-AE9: displays an error alert when the search fails', async () => {

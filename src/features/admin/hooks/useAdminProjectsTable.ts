@@ -221,6 +221,7 @@ export const useAdminProjectsTable = (extraFilters: SearchFilter[] = NO_EXTRA_FI
         setPaginationModel,
         selectedProjects,
         setSelectedProjects,
+        selectedProjectIds: getSelectedProjectIds(selectedProjects),
         selectionCount: getSelectionCount(selectedProjects, totalRows),
         searchText,
         setSearchText,

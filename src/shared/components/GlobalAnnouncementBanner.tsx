@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Box, Alert, AlertTitle, Typography } from "@mui/material";
+import { alpha, type Theme } from "@mui/material/styles";
 import { useShallow } from "zustand/react/shallow";
 
 import {
@@ -41,12 +42,26 @@ export default function GlobalAnnouncementBanner() {
 
     return (
         <Box sx={{ px: 3, pt: 2 }}>
-            <Alert severity={view.severity} onClose={dismiss}>
-                <AlertTitle sx={{ mb: view.subMessage ? 0.5 : 0 }}>
+            {/*
+              * The banner reads in the same semantic colour as its frame, in bold,
+              * over a background tinted with that colour at 80% transparency.
+              */}
+            <Alert
+                severity={view.severity}
+                onClose={dismiss}
+                sx={{
+                    border: "1px solid",
+                    borderColor: `${view.severity}.main`,
+                    color: `${view.severity}.main`,
+                    bgcolor: (theme: Theme) => alpha(theme.palette[view.severity].main, 0.2),
+                    "& .MuiAlert-icon, & .MuiAlert-action": { color: `${view.severity}.main` },
+                }}
+            >
+                <AlertTitle sx={{ mb: view.subMessage ? 0.5 : 0, fontWeight: 700, color: "inherit" }}>
                     {view.message}
                 </AlertTitle>
                 {view.subMessage && (
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant="body2" sx={{ fontWeight: 700, color: "inherit" }}>
                         {view.subMessage}
                     </Typography>
                 )}

@@ -75,7 +75,7 @@ export default function AdminUpdatesTab() {
             <Paper variant="outlined" sx={{ width: "100%", overflow: "hidden" }}>
                 {/* CARD HEADER */}
                 <Box sx={{ p: 3, borderBottom: "1px solid #e0e0e0" }}>
-                    <Typography variant="h6">Updates</Typography>
+                    <Typography variant="h6">Message update</Typography>
                 </Box>
 
                 <Box sx={{ p: 4 }}>

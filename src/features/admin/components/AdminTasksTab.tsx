@@ -32,21 +32,30 @@ export default function AdminTasksTab() {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
 
-    // When opened from the USERS tab (?owner=1,2,3), scope the list to those
-    // task owners. Memoized so the array stays referentially stable for the hook.
+    // Cross-tab filters passed as query params:
+    //  - ?owner=1,2,3   (from the USERS tab) scopes to those task owners.
+    //  - ?project=1,2,3 (from the PROJECTS tab) scopes to those projects.
+    // Both are memoized so the arrays stay referentially stable for the hook.
     const ownerIds = useMemo(() => parseUserIdsParam(searchParams.get("owner")), [searchParams]);
+    const projectIds = useMemo(() => parseUserIdsParam(searchParams.get("project")), [searchParams]);
     const extraFilters = useMemo<SearchFilter[]>(() => {
-        if (ownerIds.length === 0) return [];
-        return [
-            ownerIds.length === 1
+        const filters: SearchFilter[] = [];
+        if (ownerIds.length > 0) {
+            filters.push(ownerIds.length === 1
                 ? { field: "task_owner_id", operator: "=", value: ownerIds[0] }
-                : { field: "task_owner_id", operator: "IN", value: ownerIds },
-        ];
-    }, [ownerIds]);
+                : { field: "task_owner_id", operator: "IN", value: ownerIds });
+        }
+        if (projectIds.length > 0) {
+            filters.push(projectIds.length === 1
+                ? { field: "task_project_id", operator: "=", value: projectIds[0] }
+                : { field: "task_project_id", operator: "IN", value: projectIds });
+        }
+        return filters;
+    }, [ownerIds, projectIds]);
 
-    const clearOwnerFilter = () => {
+    const clearFilter = (key: "owner" | "project") => {
         const next = new URLSearchParams(searchParams);
-        next.delete("owner");
+        next.delete(key);
         setSearchParams(next, { replace: true });
     };
 
@@ -61,6 +70,34 @@ export default function AdminTasksTab() {
         downloadingTaskId, handleDownloadTaskFile,
         snackbar, closeSnackbar
     } = useTasksTable(extraFilters);
+
+    // USERS / PROJECTS bulk shortcuts: jump to the matching admin tab, scoped to the
+    // entities the selected task(s) belong to. Task rows carry their owner and project
+    // ids, so we resolve those from the loaded selection:
+    //  - USERS    → /admin/users?owner=<owner ids>       (the task owners)
+    //  - PROJECTS → /admin/projects?project=<project ids> (the tasks' projects)
+    const openFilteredTab = (tab: "users" | "projects") => {
+        const selectedIds = new Set(
+            Array.from(selectedTasks.type === "include" ? selectedTasks.ids : []).map(Number),
+        );
+        const selectedRows = tasks.filter((task) => selectedIds.has(task.task_id));
+
+        if (tab === "users") {
+            const ownerIds = Array.from(new Set(
+                selectedRows
+                    .map((task) => task.task_owner_id)
+                    .filter((id): id is number => typeof id === "number" && id > 0),
+            ));
+            if (ownerIds.length > 0) navigate(`/admin/users?owner=${ownerIds.join(",")}`);
+        } else {
+            const filterProjectIds = Array.from(new Set(
+                selectedRows
+                    .map((task) => task.task_project_id)
+                    .filter((id): id is number => typeof id === "number" && id > 0),
+            ));
+            if (filterProjectIds.length > 0) navigate(`/admin/projects?project=${filterProjectIds.join(",")}`);
+        }
+    };
 
     const columns: GridColDef<Task>[] = [
         ...buildBaseTaskColumns(),
@@ -167,11 +204,23 @@ export default function AdminTasksTab() {
                             <Chip
                                 color="primary"
                                 variant="outlined"
-                                onDelete={clearOwnerFilter}
+                                onDelete={() => clearFilter("owner")}
                                 label={
                                     ownerIds.length === 1
                                         ? `Owned by user #${ownerIds[0]}`
                                         : `Owned by ${ownerIds.length} users`
+                                }
+                            />
+                        )}
+                        {projectIds.length > 0 && (
+                            <Chip
+                                color="primary"
+                                variant="outlined"
+                                onDelete={() => clearFilter("project")}
+                                label={
+                                    projectIds.length === 1
+                                        ? `Project #${projectIds[0]}`
+                                        : `${projectIds.length} projects`
                                 }
                             />
                         )}
@@ -187,6 +236,8 @@ export default function AdminTasksTab() {
                                 <Typography variant="caption" component="p">
                                     DELETE removes the selected background tasks and their logs across all projects. You
                                     are asked to confirm first. It does not undo work a completed task already performed.
+                                    USERS / PROJECTS open the matching admin tab filtered to the owner(s) / project(s)
+                                    of the selected task(s).
                                 </Typography>
                             }
                         />
@@ -201,23 +252,27 @@ export default function AdminTasksTab() {
                         >
                             DELETE
                         </Button>
-                        {/* USERS / PROJECTS: reserved admin bulk actions from the mockup.
-                            No backend endpoint exists yet, so they stay disabled like the
-                            other not-yet-wired task actions (RESTART on the project tab). */}
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<PeopleAltIcon />} sx={{ fontWeight: "bold" }}>
-                                    USERS
-                                </Button>
-                            </span>
-                        </Tooltip>
-                        <Tooltip title="Coming soon">
-                            <span>
-                                <Button variant="text" color="inherit" disabled startIcon={<LaunchIcon />} sx={{ fontWeight: "bold" }}>
-                                    PROJECTS
-                                </Button>
-                            </span>
-                        </Tooltip>
+                        {/* USERS / PROJECTS: jump to the matching admin tab, scoped to the
+                            owner(s) / project(s) of the selected task(s). Disabled while
+                            nothing is selected. */}
+                        <Button
+                            variant="text" color="inherit"
+                            disabled={selectionCount === 0 || isActionRunning}
+                            onClick={() => openFilteredTab("users")}
+                            startIcon={<PeopleAltIcon />}
+                            sx={{ fontWeight: "bold" }}
+                        >
+                            USERS
+                        </Button>
+                        <Button
+                            variant="text" color="inherit"
+                            disabled={selectionCount === 0 || isActionRunning}
+                            onClick={() => openFilteredTab("projects")}
+                            startIcon={<LaunchIcon />}
+                            sx={{ fontWeight: "bold" }}
+                        >
+                            PROJECTS
+                        </Button>
                     </Stack>
                 </Box>
 

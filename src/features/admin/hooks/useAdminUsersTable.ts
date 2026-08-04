@@ -5,14 +5,24 @@ import { GridPaginationModel, GridRowSelectionModel } from "@mui/x-data-grid";
 import { countProjectsForUser, type SearchFilter } from "@/features/projects/api/projects.api";
 import { AdminUser, deleteUser, searchUsers, setUserAdmin } from "../api/adminUsers.api";
 
+// Stable default so callers that pass no extra filters don't get a fresh array
+// reference every render (which would make `fetchUsers` unstable → refetch loop).
+const NO_EXTRA_FILTERS: SearchFilter[] = [];
+
 /**
  * Hook backing the admin USERS tab.
  *
  * Mirrors `useTasksTable`: server-side pagination + debounced attribute search
  * against POST /users/searches, checkbox selection, and a snackbar. Adds the
  * admin bulk action `handleSetAdmin` (grant/revoke admin on the selection).
+ *
+ * `extraFilters` are merged into every request on top of the attribute search —
+ * used to pre-scope the list to a set of user ids (`user_id IN [...]`) when opened
+ * from the PROJECTS tab (the members + managers of the selected project(s)). The
+ * user search has no project filter, so the caller resolves it to user ids first.
+ * Callers must memoize the array so it stays referentially stable across renders.
  */
-export const useAdminUsersTable = () => {
+export const useAdminUsersTable = (extraFilters: SearchFilter[] = NO_EXTRA_FILTERS) => {
     const createEmptySelectionModel = (): GridRowSelectionModel => ({ type: "include", ids: new Set() });
 
     const getSelectionCount = (selectionModel: GridRowSelectionModel, totalCount: number): number => {
@@ -64,7 +74,7 @@ export const useAdminUsersTable = () => {
 
     useEffect(() => {
         setPaginationModel((prev) => ({ ...prev, page: 0 }));
-    }, [debouncedSearchText, searchAttribute]);
+    }, [debouncedSearchText, searchAttribute, extraFilters]);
 
     const fetchUsers = useCallback(async () => {
         setLoading(true);
@@ -88,7 +98,7 @@ export const useAdminUsersTable = () => {
                 page: paginationModel.page + 1,
                 limit: paginationModel.pageSize,
                 sort_by: "desc(user_id)",
-                filters,
+                filters: [...filters, ...extraFilters],
             });
 
             setUsers(response.users || []);
@@ -101,7 +111,7 @@ export const useAdminUsersTable = () => {
         } finally {
             setLoading(false);
         }
-    }, [paginationModel.page, paginationModel.pageSize, debouncedSearchText, searchAttribute]);
+    }, [paginationModel.page, paginationModel.pageSize, debouncedSearchText, searchAttribute, extraFilters]);
 
     useEffect(() => {
         fetchUsers();
