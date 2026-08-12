@@ -344,14 +344,14 @@ describe('AdminUsersTab', () => {
         expect(screen.getByRole('heading', { name: 'Create user' })).toBeInTheDocument();
     });
 
-    it('TC-AF19: the row edit icon navigates to the user settings URL', async () => {
+    it('TC-AF19: clicking a user row navigates to the user settings URL', async () => {
         const user = userEvent.setup();
         mockUsersSearch([makeUser({ user_id: 7 })], 1);
 
         renderUsersTab();
         await screen.findByText('John Doe');
 
-        await user.click(screen.getByRole('button', { name: 'Edit user 7' }));
+        await user.click(screen.getByText('John Doe'));
 
         expect(screen.getByTestId('location')).toHaveTextContent('/settings/7/ecopart_account');
     });

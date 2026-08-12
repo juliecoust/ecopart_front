@@ -31,6 +31,36 @@ const parseNotImportableSamples = (error: unknown, requested: string[]): string[
     return requested.filter((name) => listed.includes(name));
 };
 
+// The preview endpoint answers with short server-side strings that mean nothing to an operator —
+// "Cannot preview sample QC graphs" in particular is its catch-all for ANY unexpected read failure.
+// Turn the ones we know into something actionable; anything else is surfaced as-is.
+const describeQcPreviewError = (error: unknown): string => {
+    const message = error instanceof Error ? error.message : "";
+
+    // Catch-all 500. In practice it means the raw particle data could not be read from the source
+    // folder — the sample folder exists (so it is listed as importable) but its particle archive is
+    // missing or unreadable, which is exactly what the graphs are computed from.
+    if (/cannot preview sample qc graphs/i.test(message)) {
+        return "The graphs could not be computed from the project source folder. The raw particle data is most likely missing or unreadable — check that each sample folder holds its particle archive (UVP6: ecodata/<sample>/<sample>_Particule.zip, UVP5: work/<sample>).";
+    }
+    if (/folder does not exist at path/i.test(message)) {
+        return `The project source folder cannot be reached (${message}).`;
+    }
+    if (/unknown instrument model/i.test(message)) {
+        return "The instrument model of this project is not supported by the QC preview (UVP5 and UVP6 only).";
+    }
+    if (/user cannot be used|cannot access this project/i.test(message)) {
+        return "You are not allowed to preview the QC graphs of this project.";
+    }
+    if (/cannot find project/i.test(message)) {
+        return "The project could not be found on the server.";
+    }
+    if (/session expired/i.test(message)) {
+        return "Your session expired — sign in again to load the graphs.";
+    }
+    return message || "The graphs could not be loaded.";
+};
+
 export const useProjectImportTab = (projectId: number) => {
     // --- 1. LOCAL STATE ---
 
@@ -243,12 +273,12 @@ export const useProjectImportTab = (projectId: number) => {
                         setQcPreviews(previews || []);
                     } catch (retryError) {
                         console.error("Failed to load QC preview (retry)", retryError);
-                        setQcPreviewError(retryError instanceof Error ? retryError.message : "Failed to load QC preview.");
+                        setQcPreviewError(describeQcPreviewError(retryError));
                     }
                 }
             } else {
                 console.error("Failed to load QC preview", error);
-                setQcPreviewError(error instanceof Error ? error.message : "Failed to load QC preview.");
+                setQcPreviewError(describeQcPreviewError(error));
             }
         } finally {
             setLoadingQcPreview(false);

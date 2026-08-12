@@ -84,6 +84,57 @@ describe('components/QcProfileChart', () => {
         expect(xTickLabels.some((el) => (el.textContent ?? '').trim() !== '')).toBe(true);
     });
 
+    it('TC-AB16: variant="line" draws one polyline per series instead of visible markers', () => {
+        // MUI X has no vertical LineChart, so the curve is a hand-built <path> rendered from the
+        // chart scales. If that regressed, the graph would silently fall back to a dot cloud.
+        const { container } = render(
+            <QcProfileChart
+                title="Line"
+                series={[seriesFrom('a', '#123456', [1, 2, 3]), seriesFrom('b', '#654321', [4, 5, 6])]}
+                xLabel="value"
+                variant="line"
+            />
+        );
+        const strokes = Array.from(container.querySelectorAll('path[fill="none"]'))
+            .map((el) => (el.getAttribute('stroke') ?? '').toLowerCase());
+        expect(strokes).toContain('#123456');
+        expect(strokes).toContain('#654321');
+        // Every path is a real polyline (a move followed by at least one line segment).
+        const curves = Array.from(container.querySelectorAll('path[fill="none"]'))
+            .filter((el) => ['#123456', '#654321'].includes((el.getAttribute('stroke') ?? '').toLowerCase()));
+        expect(curves.every((el) => /^M[\d.-]+,[\d.-]+( L[\d.-]+,[\d.-]+)+$/.test(el.getAttribute('d') ?? ''))).toBe(true);
+    });
+
+    it('TC-AB17: the default "points" variant draws no polyline', () => {
+        const { container } = render(
+            <QcProfileChart title="Points" series={[seriesFrom('a', '#123456', [1, 2, 3])]} xLabel="value" />
+        );
+        const strokes = Array.from(container.querySelectorAll('path[fill="none"]'))
+            .map((el) => (el.getAttribute('stroke') ?? '').toLowerCase());
+        expect(strokes).not.toContain('#123456');
+    });
+
+    it('TC-AB18: renders the legend outside the svg so charts stay aligned', () => {
+        // MUI's own legend is an extra grid row above the <svg>, so a chart with a legend would sit
+        // lower than its neighbour without one. The legend is rendered as HTML in a fixed slot
+        // instead, and MUI's is hidden — if that regressed, the labels would be back inside the
+        // chart (as <text>) and the row of graphs would lose its common baseline.
+        const { container } = render(
+            <QcProfileChart
+                title="Legend"
+                series={[seriesFrom('1 px', '#123456', [1, 2]), seriesFrom('2 px', '#654321', [3, 4])]}
+                xLabel="count"
+                showLegend
+            />
+        );
+        for (const label of ['1 px', '2 px']) {
+            const entry = screen.getByText(label);
+            expect(entry).toBeInTheDocument();
+            expect(entry.closest('svg')).toBeNull();
+        }
+        expect(container.querySelector('.MuiChartsLegend-root')).toBeNull();
+    });
+
     describe('Accessibility Tests', () => {
         it('TC-AB12: exposes a readable text label and announces the empty state as text', () => {
             // A ScatterChart is an opaque <svg> for a screen reader: the title caption is the only

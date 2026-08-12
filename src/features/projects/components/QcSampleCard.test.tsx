@@ -106,6 +106,65 @@ describe('components/QcSampleCard', () => {
         expect(screen.getByText(/Vertical profile of black/i)).toBeInTheDocument();
     });
 
+    it('TC-AB15: plots the pressure profile as two series — kept images in blue, removed ones in red', () => {
+        // The discarded images must still be drawn (in red), not filtered out of the graph: the
+        // point of graph 1 is to SHOW what the first/last + descent filters removed.
+        const mixed = makeSample({
+            image_depth_profile: {
+                points: [
+                    { image_index: 0, image_id: '9', depth_m: 2, is_selected: false },
+                    { image_index: 1, image_id: '10', depth_m: 5, is_selected: true },
+                    { image_index: 2, image_id: '11', depth_m: 10, is_selected: true },
+                    { image_index: 3, image_id: '12', depth_m: 8, is_selected: false },
+                ],
+                filter_first_image: '10',
+                filter_last_image: '11',
+                total_images: 4,
+                selected_images: 2,
+            },
+        });
+        const { container } = render(<QcSampleCard sample={mixed} onRemove={() => {}} />);
+
+        // The pressure chart is the first one on the card; each series becomes one <g> of marks.
+        const pressureChart = container.querySelectorAll('svg')[0];
+        const fills = new Set(
+            Array.from(pressureChart.querySelectorAll('circle, path[data-highlighted]'))
+                .map((el) => (el.getAttribute('fill') ?? '').toLowerCase())
+        );
+        expect(fills.has('#3180b6')).toBe(true); // mainblue[500] — kept
+        expect(fills.has('#d35643')).toBe(true); // danger[500]   — removed
+    });
+
+    /** md column width of each direct cell of the card's grid, tagged chart / metadata. */
+    const cellWidths = (container: HTMLElement) => {
+        const cells = Array.from(container.querySelector('.MuiGrid-container')!.children);
+        return cells.map((cell) => ({
+            kind: cell.querySelector('svg') ? 'chart' : 'metadata',
+            md: Number(/MuiGrid-grid-md-(\d+)/.exec(cell.className)?.[1]),
+        }));
+    };
+
+    it('TC-AB19: gives every graph the same column width, whatever the row holds', () => {
+        // The four graphs must line up. They are cells of ONE grid, so equal `md` sizes means equal
+        // rendered widths — and the metadata block takes exactly what is left of the 12 columns.
+        // With the black profile the bottom row holds 3 graphs; without it, 2 wider ones — and the
+        // pressure graph above has to follow, which is the case this locks down.
+        for (const black of [binned('linear', [{ label: '1 px', unit: 'count', values: [1, 2] }]), null]) {
+            const { container, unmount } = render(
+                <QcSampleCard sample={makeSample({ black_profile: black })} onRemove={() => {}} />
+            );
+            const cells = cellWidths(container);
+            const charts = cells.filter((c) => c.kind === 'chart');
+            const metadata = cells.filter((c) => c.kind === 'metadata');
+
+            expect(charts).toHaveLength(black ? 4 : 3);
+            expect(new Set(charts.map((c) => c.md)).size).toBe(1);      // one width for all graphs
+            expect(metadata).toHaveLength(1);
+            expect(metadata[0].md).toBe(12 - charts[0].md);             // first row fills the width
+            unmount();
+        }
+    });
+
     describe('Accessibility Tests', () => {
         it('TC-AB13: metadata fields are label-associated and read-only (not disabled)', () => {
             render(<QcSampleCard sample={makeSample()} onRemove={() => {}} />);
