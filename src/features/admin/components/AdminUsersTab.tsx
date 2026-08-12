@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
     Box, Typography, Button, TextField, MenuItem,
-    Snackbar, Alert, Stack, IconButton, Tooltip, Paper, Chip
+    Snackbar, Alert, Stack, Tooltip, Paper, Chip
 } from "@mui/material";
 
 import AddIcon from "@mui/icons-material/Add";
-import EditIcon from "@mui/icons-material/Edit";
 import InfoTooltip from "@/shared/components/InfoTooltip";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
@@ -17,7 +16,7 @@ import MailOutlineIcon from "@mui/icons-material/MailOutline";
 import ErrorIcon from "@mui/icons-material/Error";
 
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
+import { DataGrid, GridColDef, GridRenderCellParams, GridRowParams } from "@mui/x-data-grid";
 
 import { CountriesWrapper } from "@/shared/country-wrapper";
 import { SearchFilter, searchProjects } from "@/features/projects/api/projects.api";
@@ -123,7 +122,10 @@ export default function AdminUsersTab() {
         }
         if (constraints.length === 0) return [];
 
-        const ids = constraints.reduce((acc, list) => acc.filter((id) => list.includes(id)));
+        const ids = constraints.reduce((acc, list) => {
+            const allowed = new Set(list);
+            return acc.filter((id) => allowed.has(id));
+        });
         return [{ field: "user_id", operator: "IN", value: ids.length > 0 ? ids : [-1] }];
     }, [ownerIds, projectIds, projectKey, projectUsers]);
 
@@ -224,26 +226,6 @@ export default function AdminUsersTab() {
             sortable: false,
             renderCell: renderAccountStatusCell,
         },
-        {
-            field: "actions",
-            headerName: "",
-            width: 60,
-            sortable: false,
-            renderCell: (params: GridRenderCellParams<AdminUser>) => (
-                <Tooltip title="Edit user">
-                    <span>
-                        <IconButton
-                            size="small"
-                            disabled={Boolean(params.row.deleted)}
-                            onClick={() => navigate(`/settings/${params.row.user_id}/ecopart_account`)}
-                            aria-label={`Edit user ${params.row.user_id}`}
-                        >
-                            <EditIcon fontSize="small" />
-                        </IconButton>
-                    </span>
-                </Tooltip>
-            ),
-        },
     ];
 
     const dataGridStyles = {
@@ -260,6 +242,14 @@ export default function AdminUsersTab() {
             backgroundColor: "#e6f0ff",
             "&:hover": { backgroundColor: "#d9e8ff" }
         },
+        "& .MuiDataGrid-row.row-clickable": { cursor: "pointer" },
+    };
+
+    // Deleted / anonymized accounts can't be edited (the backend rejects any PATCH
+    // on a deleted user), so their row isn't clickable to the edit page.
+    const handleRowClick = (params: GridRowParams<AdminUser>) => {
+        if (params.row.deleted) return;
+        navigate(`/settings/${params.row.user_id}/ecopart_account`);
     };
 
     const actionsDisabled = selectionCount === 0 || isActionRunning;
@@ -416,6 +406,8 @@ export default function AdminUsersTab() {
                         isRowSelectable={(params) => !params.row.deleted}
                         disableRowSelectionExcludeModel
                         disableRowSelectionOnClick
+                        onRowClick={handleRowClick}
+                        getRowClassName={(params) => (params.row.deleted ? "" : "row-clickable")}
                         loading={loading}
                         rowSelectionModel={selectedUsers}
                         onRowSelectionModelChange={setSelectedUsers}

@@ -1,9 +1,10 @@
 import React from "react";
 import {
     Box, Typography, Button, Switch, FormControlLabel,
-    TextField, Divider, Snackbar, Alert, InputAdornment, Tooltip,
+    TextField, Divider, Snackbar, Alert, AlertTitle, InputAdornment, Tooltip,
     Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress
 } from "@mui/material";
+import { ThemeProvider } from "@mui/material/styles";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import AddIcon from "@mui/icons-material/Add";
@@ -11,7 +12,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
 import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 
-import { ecotaxaColors } from "@/theme";
+import { createEcopartTheme, ecotaxaColors } from "@/theme";
 import SectionCard from "@/shared/components/SectionCard";
 import InfoTooltip from "@/shared/components/InfoTooltip";
 
@@ -119,6 +120,21 @@ const ecoTaxaImportInfoContent = (
     </Box>
 );
 
+/**
+ * The QC modal is a dense read-at-a-glance screen (four graphs plus their metadata per sample), so
+ * all of its text runs 20% larger than the rest of the app. Built once at module level rather than
+ * per render, and applied to the whole dialog — including the charts, whose axis and tick labels
+ * come from the theme's `body1`/`caption`.
+ */
+const qcModalTheme = createEcopartTheme(1.2);
+
+/**
+ * Slack (px) left between the scroll position and the bottom of the QC dialog for the review to
+ * count as complete — sub-pixel rounding and the last card's margin would otherwise make the exact
+ * bottom unreachable.
+ */
+const QC_SCROLL_BOTTOM_TOLERANCE_PX = 24;
+
 export const ProjectImportTab: React.FC<ProjectImportTabProps> = ({ projectId }) => {
     const {
         rootFolderPath,
@@ -137,10 +153,46 @@ export const ProjectImportTab: React.FC<ProjectImportTabProps> = ({ projectId })
     const ecoProjectLinked = hasEcoTaxaProject;
     const ecoTaxaActionsDisabled = !ecoProjectLinked;
 
-    // Import is blocked while the preview is loading, nothing is selected, an import is in flight, or
-    // any sample in the working set is not importable (it would fail the whole backend import).
+    /**
+     * The QC dialog is a *review* screen: the import actions stay locked until the operator has
+     * scrolled through every graph, i.e. reached the bottom of the scrollable content. It is a
+     * one-way latch — once the bottom has been seen, scrolling back up (or removing a sample, which
+     * makes the content scrollable again) must not re-lock the buttons. The latch is reset when the
+     * dialog opens or while the preview is (re)loading, so a new set of samples is reviewed afresh.
+     */
+    const qcScrollRef = React.useRef<HTMLDivElement | null>(null);
+    const qcContentRef = React.useRef<HTMLDivElement | null>(null);
+    const [qcFullyReviewed, setQcFullyReviewed] = React.useState(false);
+
+    const updateQcScrollState = React.useCallback(() => {
+        const el = qcScrollRef.current;
+        if (!el) return;
+        // Content that fits without a scrollbar satisfies this immediately: there is nothing left to
+        // scroll to, so nothing left to review.
+        const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= QC_SCROLL_BOTTOM_TOLERANCE_PX;
+        if (atBottom) setQcFullyReviewed(true);
+    }, []);
+
+    React.useEffect(() => {
+        if (!isQcModalOpen || loadingQcPreview) {
+            setQcFullyReviewed(false);
+            return;
+        }
+        // The charts mount asynchronously (MUI X measures its container first), so the content keeps
+        // growing after this effect runs: watch it and re-evaluate instead of measuring only once.
+        updateQcScrollState();
+        const content = qcContentRef.current;
+        if (!content || typeof ResizeObserver === "undefined") return;
+        const observer = new ResizeObserver(updateQcScrollState);
+        observer.observe(content);
+        return () => observer.disconnect();
+    }, [isQcModalOpen, loadingQcPreview, qcPreviews, qcNotImportable, updateQcScrollState]);
+
+    // Import is blocked while the preview is loading, nothing is selected, an import is in flight,
+    // any sample in the working set is not importable (it would fail the whole backend import), or
+    // the graphs have not been scrolled through yet.
     const importActionsDisabled =
-        loadingQcPreview || qcSampleNames.length === 0 || isImporting || qcNotImportable.length > 0;
+        loadingQcPreview || qcSampleNames.length === 0 || isImporting || qcNotImportable.length > 0 || !qcFullyReviewed;
 
     // --- DATAGRID COLUMNS DEFINITIONS ---
     const rawSamplesColumns: GridColDef<ImportableRawSample>[] = [
@@ -494,93 +546,123 @@ export const ProjectImportTab: React.FC<ProjectImportTabProps> = ({ projectId })
             </SectionCard>
 
             {/* --- QC MODAL --- */}
-            <Dialog open={isQcModalOpen} onClose={() => setIsQcModalOpen(false)} maxWidth="lg" fullWidth scroll="paper">
-                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    {/* component="span": DialogTitle renders an <h2>, so a nested heading (variant="h5"
-                        defaults to <h5>) would be invalid HTML. */}
-                    <Typography component="span" variant="h5" fontWeight="bold">Import quality control</Typography>
-                </DialogTitle>
-                <DialogContent dividers sx={{ backgroundColor: 'grey.50' }}>
-                    <Typography variant="body1" sx={{ mb: 4 }}>
-                        You are about to import <strong>{qcSampleNames.length}</strong> {qcSampleNames.length === 1 ? "sample" : "samples"} : <strong>{qcSampleNames.join(", ")}</strong>
-                    </Typography>
+            <ThemeProvider theme={qcModalTheme}>
+                <Dialog open={isQcModalOpen} onClose={() => setIsQcModalOpen(false)} maxWidth="lg" fullWidth scroll="paper">
+                    <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        {/* component="span": DialogTitle renders an <h2>, so a nested heading (variant="h5"
+                            defaults to <h5>) would be invalid HTML. */}
+                        <Typography component="span" variant="h5" fontWeight="bold">Visual quality control and import</Typography>
+                    </DialogTitle>
+                    <DialogContent
+                        dividers
+                        ref={qcScrollRef}
+                        onScroll={updateQcScrollState}
+                        sx={{ backgroundColor: 'grey.50' }}
+                    >
+                        {/* Wrapper measured by the ResizeObserver above: its height is what grows as the
+                            charts mount, and what decides whether the dialog is scrollable at all. */}
+                        <Box ref={qcContentRef}>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                                Please review the graphs of every sample below, then import them as validated. If the image
+                                selection or the descending filter does not look right, cancel this import, go back to
+                                Zooprocess or UVPapp to run the procedure again, and import the samples afterwards.
+                            </Typography>
 
-                    {qcPreviewError && (
-                        <Alert severity="warning" sx={{ mb: 3 }}>
-                            QC preview unavailable: {qcPreviewError}. You can still import the samples above.
-                        </Alert>
-                    )}
+                            <Typography variant="body1" sx={{ mb: 4 }}>
+                                You are about to import <strong>{qcSampleNames.length}</strong> {qcSampleNames.length === 1 ? "sample" : "samples"} : <strong>{qcSampleNames.join(", ")}</strong>
+                            </Typography>
 
-                    {loadingQcPreview ? (
-                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 8, gap: 2 }}>
-                            <CircularProgress />
-                            <Typography variant="body2" color="text.secondary">Computing QC graphs…</Typography>
-                        </Box>
-                    ) : (
-                        <>
-                            {/* Samples the preview endpoint rejected as not importable: no QC graphs, but
-                                shown FIRST (they block the import) with a red border and a REMOVE button so
-                                the operator can spot and drop them without scrolling past the chart cards. */}
-                            {qcNotImportable.map((name) => (
-                                <Box key={name} sx={{ backgroundColor: ecotaxaColors.danger[50], p: 3, borderRadius: 1, border: '2px solid', borderColor: 'error.main', mb: 3 }}>
-                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                        <Typography variant="subtitle2" fontWeight="bold" color="error.main">Sample : {name}</Typography>
-                                        <Button
-                                            onClick={() => removeQcSample(name)}
-                                            disabled={isImporting}
-                                            color="error"
-                                            sx={{ fontWeight: 'bold' }}
-                                            size="small"
-                                        >
-                                            REMOVE FROM IMPORT
-                                        </Button>
-                                    </Box>
-                                    <Alert severity="error">
-                                        This sample is not importable, so no QC preview could be generated. Remove it from the import to continue.
-                                    </Alert>
+                            {qcPreviewError && (
+                                <Alert severity="warning" sx={{ mb: 3 }}>
+                                    <AlertTitle>QC graphs unavailable</AlertTitle>
+                                    {qcPreviewError}
+                                    <Typography variant="body2" sx={{ mt: 1 }}>
+                                        {qcSampleNames.length === 1 ? "This sample" : "These samples"} can still be
+                                        imported, but without the visual quality control — import{' '}
+                                        {qcSampleNames.length === 1 ? "it" : "them"} as pending if you want to review{' '}
+                                        {qcSampleNames.length === 1 ? "it" : "them"} later.
+                                    </Typography>
+                                </Alert>
+                            )}
+
+                            {loadingQcPreview ? (
+                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 8, gap: 2 }}>
+                                    <CircularProgress />
+                                    <Typography variant="body2" color="text.secondary">Computing QC graphs…</Typography>
                                 </Box>
-                            ))}
+                            ) : (
+                                <>
+                                    {/* Samples the preview endpoint rejected as not importable: no QC graphs, but
+                                        shown FIRST (they block the import) with a red border and a REMOVE button so
+                                        the operator can spot and drop them without scrolling past the chart cards. */}
+                                    {qcNotImportable.map((name) => (
+                                        <Box key={name} sx={{ backgroundColor: ecotaxaColors.danger[50], p: 3, borderRadius: 1, border: '2px solid', borderColor: 'error.main', mb: 3 }}>
+                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                                                <Typography variant="subtitle2" fontWeight="bold" color="error.main">Sample : {name}</Typography>
+                                                <Button
+                                                    onClick={() => removeQcSample(name)}
+                                                    disabled={isImporting}
+                                                    color="error"
+                                                    sx={{ fontWeight: 'bold' }}
+                                                    size="small"
+                                                >
+                                                    REMOVE FROM IMPORT
+                                                </Button>
+                                            </Box>
+                                            <Alert severity="error">
+                                                This sample is not importable, so no QC preview could be generated. Remove it from the import to continue.
+                                            </Alert>
+                                        </Box>
+                                    ))}
 
-                            {qcPreviews.map((sample) => (
-                                <QcSampleCard
-                                    key={sample.sample_name}
-                                    sample={sample}
-                                    onRemove={removeQcSample}
-                                    removeDisabled={isImporting}
-                                />
-                            ))}
-                        </>
-                    )}
-                </DialogContent>
-                <DialogActions sx={{ p: 3 }}>
-                    {qcNotImportable.length > 0 && (
-                        <Typography variant="caption" color="error" sx={{ mr: 'auto' }}>
-                            Remove the non-importable sample{qcNotImportable.length > 1 ? 's' : ''} to continue.
-                        </Typography>
-                    )}
-                    <Button
-                        onClick={() => confirmAndExecuteRawImport(true)}
-                        disabled={importActionsDisabled}
-                        variant="text"
-                        color="success"
-                        sx={{ fontWeight: 'bold' }}
-                    >
-                        IMPORT &amp; VALIDATE
-                    </Button>
-                    <Button
-                        onClick={() => confirmAndExecuteRawImport(false)}
-                        disabled={importActionsDisabled}
-                        variant="text"
-                        color="info"
-                        sx={{ fontWeight: 'bold' }}
-                    >
-                        IMPORT &amp; PENDING
-                    </Button>
-                    <Button onClick={() => setIsQcModalOpen(false)} color="error" sx={{ fontWeight: 'bold' }}>
-                        CANCEL IMPORT
-                    </Button>
-                </DialogActions>
-            </Dialog>
+                                    {qcPreviews.map((sample) => (
+                                        <QcSampleCard
+                                            key={sample.sample_name}
+                                            sample={sample}
+                                            onRemove={removeQcSample}
+                                            removeDisabled={isImporting}
+                                        />
+                                    ))}
+                                </>
+                            )}
+                        </Box>
+                    </DialogContent>
+                    <DialogActions sx={{ p: 3 }}>
+                        {qcNotImportable.length > 0 ? (
+                            <Typography variant="caption" color="error" sx={{ mr: 'auto' }}>
+                                Remove the non-importable sample{qcNotImportable.length > 1 ? 's' : ''} to continue.
+                            </Typography>
+                        ) : !qcFullyReviewed && !loadingQcPreview && (
+                            // Explains the disabled import buttons: without it the operator has no way to
+                            // know the review gate exists.
+                            <Typography variant="caption" color="text.secondary" sx={{ mr: 'auto' }}>
+                                Scroll down through every graph to enable the import.
+                            </Typography>
+                        )}
+                        <Button
+                            onClick={() => confirmAndExecuteRawImport(true)}
+                            disabled={importActionsDisabled}
+                            variant="text"
+                            color="success"
+                            sx={{ fontWeight: 'bold' }}
+                        >
+                            IMPORT &amp; VALIDATE
+                        </Button>
+                        <Button
+                            onClick={() => confirmAndExecuteRawImport(false)}
+                            disabled={importActionsDisabled}
+                            variant="text"
+                            color="info"
+                            sx={{ fontWeight: 'bold' }}
+                        >
+                            IMPORT &amp; PENDING
+                        </Button>
+                        <Button onClick={() => setIsQcModalOpen(false)} color="error" sx={{ fontWeight: 'bold' }}>
+                            CANCEL IMPORT
+                        </Button>
+                    </DialogActions>
+                </Dialog>
+            </ThemeProvider>
 
             <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={closeSnackbar} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
                 <Alert onClose={closeSnackbar} severity={snackbar.severity} variant="filled" sx={{ width: "100%" }}>

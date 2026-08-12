@@ -1,6 +1,6 @@
 ﻿import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 // Mocks API
@@ -74,6 +74,28 @@ const mockQcGraphs = (name: string): SampleQcGraphs => ({
         removed_images: { count: 0, percent: 0 },
     },
 });
+
+/**
+ * JSDOM has no layout: every element reports scrollHeight/clientHeight = 0, so the QC dialog would
+ * always look "already scrolled to the bottom". Fake a scrollable box for the tests that exercise
+ * the review gate, and restore the real (absent) descriptors afterwards.
+ */
+const stubScrollableLayout = (scrollHeight: number, clientHeight: number) => {
+    const previous = (['scrollHeight', 'clientHeight'] as const).map((prop) => [
+        prop,
+        Object.getOwnPropertyDescriptor(HTMLElement.prototype, prop),
+    ] as const);
+
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => clientHeight });
+
+    return () => {
+        previous.forEach(([prop, descriptor]) => {
+            if (descriptor) Object.defineProperty(HTMLElement.prototype, prop, descriptor);
+            else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop];
+        });
+    };
+};
 
 describe('I. IMPORT TAB (ProjectImportTab)', () => {
     beforeEach(() => {
@@ -306,6 +328,64 @@ describe('I. IMPORT TAB (ProjectImportTab)', () => {
             // Import is blocked until the bad sample is removed.
             expect(screen.getByRole('button', { name: /IMPORT & VALIDATE/i })).toBeDisabled();
             expect(screen.getByRole('button', { name: /IMPORT & PENDING/i })).toBeDisabled();
+        }, 20000);
+
+        it('TC-N3d - the catch-all preview failure is explained, not echoed verbatim (UI level)', async () => {
+            // "Cannot preview sample QC graphs" is the backend catch-all for any unexpected read
+            // failure; on its own it tells the operator nothing, so it must be translated.
+            mockedPreviewSamplesQcGraphs.mockRejectedValue(new Error('Cannot preview sample QC graphs'));
+
+            const user = userEvent.setup();
+            render(<ProjectImportTab projectId={77} />);
+
+            const importAllButtons = await screen.findAllByRole('button', { name: /^IMPORT ALL$/i });
+            const rawImportAll = importAllButtons.find((b) => !b.hasAttribute('disabled')) ?? importAllButtons[0];
+            await user.click(rawImportAll);
+
+            expect(await screen.findByText(/QC graphs unavailable/i)).toBeInTheDocument();
+            expect(screen.getByText(/raw particle data is most likely missing or unreadable/i)).toBeInTheDocument();
+            expect(screen.getByText(/_Particule\.zip/i)).toBeInTheDocument();
+            // The raw server string never reaches the operator.
+            expect(screen.queryByText(/Cannot preview sample QC graphs/i)).not.toBeInTheDocument();
+
+            // Nothing is flagged as not-importable, so the import stays available.
+            expect(screen.queryByRole('button', { name: /REMOVE FROM IMPORT/i })).not.toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /IMPORT & PENDING/i })).not.toBeDisabled();
+        }, 20000);
+
+        it('TC-N3c - import actions stay disabled until the graphs are scrolled to the bottom (UI level)', async () => {
+            const restoreLayout = stubScrollableLayout(4000, 600);
+            try {
+                const user = userEvent.setup();
+                render(<ProjectImportTab projectId={77} />);
+
+                const importAllButtons = await screen.findAllByRole('button', { name: /^IMPORT ALL$/i });
+                const rawImportAll = importAllButtons.find((b) => !b.hasAttribute('disabled')) ?? importAllButtons[0];
+                await user.click(rawImportAll);
+
+                await screen.findByText(/You are about to import/i);
+
+                // Nothing scrolled yet: both imports locked, with the reason spelled out.
+                expect(screen.getByRole('button', { name: /IMPORT & VALIDATE/i })).toBeDisabled();
+                expect(screen.getByRole('button', { name: /IMPORT & PENDING/i })).toBeDisabled();
+                expect(screen.getByText(/Scroll down through every graph/i)).toBeInTheDocument();
+
+                // Cancel is never gated by the review.
+                expect(screen.getByRole('button', { name: /CANCEL IMPORT/i })).not.toBeDisabled();
+
+                // Reaching the bottom unlocks them.
+                const scroller = document.querySelector('.MuiDialogContent-root') as HTMLElement;
+                Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 3400 });
+                fireEvent.scroll(scroller);
+
+                await waitFor(() => {
+                    expect(screen.getByRole('button', { name: /IMPORT & VALIDATE/i })).not.toBeDisabled();
+                });
+                expect(screen.getByRole('button', { name: /IMPORT & PENDING/i })).not.toBeDisabled();
+                expect(screen.queryByText(/Scroll down through every graph/i)).not.toBeInTheDocument();
+            } finally {
+                restoreLayout();
+            }
         }, 20000);
 
         it('TC-N3 - EcoTaxa Empty State Rendering', async () => {
