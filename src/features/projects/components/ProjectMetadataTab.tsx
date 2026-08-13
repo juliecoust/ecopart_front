@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import { Box, Button, Snackbar, Alert, CircularProgress } from "@mui/material";
 
 import SectionCard from "@/shared/components/SectionCard";
@@ -43,6 +44,16 @@ export const ProjectMetadataTab: React.FC<ProjectMetadataTabProps> = ({ projectI
         closeSnackbar
     } = useProjectMetadataTab(projectId);
 
+    const location = useLocation();
+    const ecoTaxaLinkRef = useRef<HTMLDivElement>(null);
+
+    // Scroll to the EcoTaxa link section when navigated here with the #ecotaxa-link anchor
+    // (e.g. from the "LINK PROJECT" call-to-action on the Stats tab).
+    useEffect(() => {
+        if (!loading && location.hash === "#ecotaxa-link") {
+            ecoTaxaLinkRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+    }, [loading, location.hash]);
 
     // Show a loading spinner while data is being fetched
     if (loading) {
@@ -89,7 +100,7 @@ export const ProjectMetadataTab: React.FC<ProjectMetadataTabProps> = ({ projectI
                         />
                     </Grid>
 
-                    <Grid size={{ xs: 12, md: 6 }}>
+                    <Grid size={{ xs: 12, md: 6 }} id="ecotaxa-link" ref={ecoTaxaLinkRef}>
                         <EcoTaxaLinkSection
                             values={values.ecoTaxa}
                             onChange={(data) => updateField('ecoTaxa', data)}
