@@ -111,11 +111,37 @@ describe('ProjectDetailsPage (Functional)', () => {
         // Verify Security content appears (e.g. Data privacy delays)
         expect(await screen.findByText(/Data privacy delays/i)).toBeInTheDocument();
 
-        // Verify STATS tab (mock content)
+        // Verify STATS tab (empty-state guidance)
         const statsTab = screen.getByRole('tab', { name: /STATS/i });
         await user.click(statsTab);
 
-        expect(await screen.findByText(/Stats Tab \(Coming Soon\)/i)).toBeInTheDocument();
+        expect(await screen.findByText(/Your project is empty\. You can now import data\./i)).toBeInTheDocument();
+        expect(screen.getByText(/is not linked to an EcoTaxa project/i)).toBeInTheDocument();
+    }, 20000);
+
+    // TC-I3c: Stats tab call-to-actions
+    it('TC-I3c: should route to the Import tab and the EcoTaxa link anchor from the Stats actions', async () => {
+        const user = userEvent.setup({ delay: null });
+        mockProjectFetch(101);
+
+        renderWithRouter(
+            <Routes>
+                <Route path="/projects/:id/:tabName?" element={<ProjectDetailsPage />} />
+            </Routes>,
+            { route: '/projects/101/stats' }
+        );
+
+        await screen.findByRole('heading', { name: 'Test Project' });
+
+        await user.click(await screen.findByRole('button', { name: /IMPORT DATA/i }));
+        expect(screen.getByRole('tab', { name: /IMPORT/i })).toHaveAttribute('aria-selected', 'true');
+
+        // Back to STATS, then follow the EcoTaxa call-to-action
+        await user.click(screen.getByRole('tab', { name: /STATS/i }));
+        await user.click(await screen.findByRole('button', { name: /LINK PROJECT/i }));
+
+        expect(screen.getByRole('tab', { name: /METADATA/i })).toHaveAttribute('aria-selected', 'true');
+        expect(await screen.findByLabelText(/Project acronym/i)).toBeInTheDocument();
     }, 20000);
 
     // TC-I3b: Deep-linked tab URL

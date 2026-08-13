@@ -32,6 +32,12 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     };
 }
 
+// JSDOM does not implement scrolling; components that scroll an anchor into view
+// (e.g. the EcoTaxa link section of the metadata tab) would otherwise throw.
+if (typeof Element.prototype.scrollIntoView !== "function") {
+    Element.prototype.scrollIntoView = function () { /* no-op */ };
+}
+
 // JSDOM does not implement layout; provide stable non-zero boxes for MUI Popover/Menu anchors.
 Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
     configurable: true,
