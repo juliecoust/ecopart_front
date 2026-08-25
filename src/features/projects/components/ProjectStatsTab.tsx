@@ -53,7 +53,7 @@ export const ProjectStatsTab: React.FC<ProjectStatsTabProps> = ({ onImportData, 
             <Stack spacing={2}>
                 <StatsInfoRow
                     icon={<DownloadIcon />}
-                    title="Your project is empty. You can now import data."
+                    title="Import data to get started."
                     description="You can import UVP data, and particles data in the import tab of your project."
                     actionLabel="IMPORT DATA"
                     onAction={onImportData}
