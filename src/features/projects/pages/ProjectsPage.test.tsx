@@ -162,6 +162,60 @@ describe('ProjectsPage (Functional)', () => {
         expect(await screen.findByText('Project Details Mock')).toBeInTheDocument();
     }, 15000);
 
+    // TC-G4b: Delete a managed project from the selection bar
+    it('TC-G4b: should delete the selected managed project after confirmation', async () => {
+        const user = userEvent.setup();
+        const deletedIds: string[] = [];
+
+        mockProjectsResponse([MOCK_PROJECT_1, MOCK_PROJECT_2]);
+        server.use(
+            http.delete('*/projects/:projectId/', ({ params }) => {
+                deletedIds.push(String(params.projectId));
+                return HttpResponse.json({ message: 'deleted' });
+            })
+        );
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        renderWithRouter(<ProjectsPage />, { route: '/projects' });
+
+        await screen.findByText('Ocean Deep Exploration');
+
+        // MOCK_PROJECT_1 is managed by the logged-in user (user_id 1).
+        const rowCheckboxes = screen.getAllByLabelText(/Select row/i);
+        await user.click(rowCheckboxes[0]);
+
+        const deleteButton = screen.getByRole('button', { name: /DELETE/i });
+        expect(deleteButton).toBeEnabled();
+
+        await user.click(deleteButton);
+
+        expect(confirmSpy).toHaveBeenCalled();
+        expect(await screen.findByText(/Project\(s\) deleted\./i)).toBeInTheDocument();
+        expect(deletedIds).toEqual(['101']);
+
+        confirmSpy.mockRestore();
+    }, 15000);
+
+    // TC-G4c: Delete stays disabled for a project the user is only a member of
+    it('TC-G4c: should keep DELETE disabled when the selection is not managed by the user', async () => {
+        const user = userEvent.setup();
+        mockProjectsResponse([MOCK_PROJECT_1, MOCK_PROJECT_2]);
+
+        renderWithRouter(<ProjectsPage />, { route: '/projects' });
+
+        await screen.findByText('Coastal Monitoring');
+
+        // Nothing selected yet: the action is unavailable.
+        expect(screen.getByRole('button', { name: /DELETE/i })).toBeDisabled();
+
+        // MOCK_PROJECT_2 only lists the user as a member.
+        const rowCheckboxes = screen.getAllByLabelText(/Select row/i);
+        await user.click(rowCheckboxes[1]);
+
+        expect(screen.getByText('1 items selected')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /DELETE/i })).toBeDisabled();
+    }, 15000);
+
     // TC-G6: Projects Pagination & Query Sync
     it('TC-G6: should request next page and render new rows when pagination changes', async () => {
         const user = userEvent.setup();
