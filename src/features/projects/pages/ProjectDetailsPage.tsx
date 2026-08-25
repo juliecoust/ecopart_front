@@ -35,7 +35,6 @@ import SyncIcon from "@mui/icons-material/Sync";
 import LockIcon from "@mui/icons-material/Lock";
 import AssignmentIcon from "@mui/icons-material/Assignment";
 import BackupIcon from "@mui/icons-material/Backup";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { ProjectDataTab } from "../components/ProjectDataTab";
 
 export default function ProjectDetailsPage() {
