@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { AlertColor } from "@mui/material";
 import { GridPaginationModel, GridRowSelectionModel } from "@mui/x-data-grid";
-import { searchProjects, searchProjectSamples, Project, SearchFilter } from "../api/projects.api";
+import { searchProjects, searchProjectSamples, deleteProject, Project, SearchFilter } from "../api/projects.api";
 import { useAuthStore } from "@/features/auth/store/auth.store";
 
 export const useProjectsTable = () => {
@@ -29,6 +30,15 @@ export const useProjectsTable = () => {
     const [rowSelectionModel, setRowSelectionModel] = useState<GridRowSelectionModel>({
         type: "include",
         ids: new Set(),
+    });
+
+    // Guards the destructive DELETE action while its requests are in flight.
+    const [isActionRunning, setIsActionRunning] = useState(false);
+
+    const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: AlertColor }>({
+        open: false,
+        message: "",
+        severity: "info",
     });
 
     // Monotonic id identifying the latest fetch. The async sample-count enrichment
@@ -180,6 +190,60 @@ export const useProjectsTable = () => {
         fetchProjects();
     }, [fetchProjects]);
 
+    const closeSnackbar = () => {
+        setSnackbar((prev) => ({ ...prev, open: false }));
+    };
+
+    /**
+     * Delete every project in the current selection (after confirmation).
+     *
+     * Server-side this is restricted to the project managers (and admins), so a
+     * member/contact selection comes back rejected: we keep only the projects
+     * that actually failed selected, so a retry targets just those.
+     */
+    const handleDeleteProjects = async () => {
+        if (rowSelectionModel.type === "exclude") {
+            console.warn("[Projects] Exclude selection model is disabled for this grid.");
+            return;
+        }
+
+        const selectedIds = Array.from(rowSelectionModel.ids).map(Number);
+        if (selectedIds.length === 0) return;
+
+        if (!window.confirm(
+            `Are you sure you want to delete ${selectedIds.length} project(s)? ` +
+            `This also removes their samples and any linked EcoTaxa project. This cannot be undone.`,
+        )) return;
+
+        setIsActionRunning(true);
+        try {
+            const results = await Promise.allSettled(
+                selectedIds.map((projectId) => deleteProject(projectId)),
+            );
+            const failedIds = selectedIds.filter((_, index) => results[index].status === "rejected");
+
+            if (failedIds.length === 0) {
+                setSnackbar({ open: true, message: "Project(s) deleted.", severity: "success" });
+            } else {
+                console.error("[Projects] Some deletions failed:", failedIds);
+                setSnackbar({
+                    open: true,
+                    message: "Failed to delete some projects. Only a project manager can delete it.",
+                    severity: "error",
+                });
+            }
+
+            setRowSelectionModel(
+                failedIds.length > 0
+                    ? { type: "include", ids: new Set<number>(failedIds) }
+                    : { type: "include", ids: new Set() },
+            );
+            fetchProjects();
+        } finally {
+            setIsActionRunning(false);
+        }
+    };
+
     return {
         projects, loading, totalRows,
         error,
@@ -188,5 +252,8 @@ export const useProjectsTable = () => {
         selectedFilter, setSelectedFilter,
         paginationModel, setPaginationModel,
         rowSelectionModel, setRowSelectionModel,
+        isActionRunning,
+        handleDeleteProjects,
+        snackbar, closeSnackbar,
     };
 };

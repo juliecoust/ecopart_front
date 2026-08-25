@@ -175,6 +175,72 @@ describe('ProjectDetailsPage (Functional)', () => {
         // but checking the rendered route mock is the React Testing Library way.
     });
 
+    // TC-I7: Delete hidden for a non-manager
+    it('TC-I7: should not offer DELETE when the user does not manage the project', async () => {
+        mockProjectFetch(101);
+
+        renderWithRouter(
+            <Routes>
+                <Route path="/projects/:id/:tabName?" element={<ProjectDetailsPage />} />
+            </Routes>,
+            { route: '/projects/101' }
+        );
+
+        await screen.findByRole('heading', { name: 'Test Project' });
+
+        expect(screen.queryByRole('button', { name: /^DELETE$/i })).not.toBeInTheDocument();
+    }, 15000);
+
+    // TC-I8: Delete then navigate back to the project list
+    it('TC-I8: should delete the project and return to the project list', async () => {
+        const user = userEvent.setup();
+        const deletedIds: string[] = [];
+
+        mockProjectFetch(101);
+        server.use(
+            // Managed by the logged-in user (user_id 1), so DELETE is offered.
+            http.post('*/projects/searches', () => HttpResponse.json({
+                search_info: { total: 1, page: 1, limit: 1 },
+                projects: [{
+                    project_id: 101,
+                    project_title: 'Test Project',
+                    project_acronym: 'TEST',
+                    instrument_model: 'UVP5HD',
+                    root_folder_path: '/data/test',
+                    privacy_duration: 2,
+                    visible_duration: 24,
+                    public_duration: 36,
+                    managers: [{ user_id: 1 }],
+                    members: [],
+                    contact: null
+                }]
+            })),
+            http.delete('*/projects/:projectId/', ({ params }) => {
+                deletedIds.push(String(params.projectId));
+                return HttpResponse.json({ message: 'deleted' });
+            })
+        );
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        renderWithRouter(
+            <Routes>
+                <Route path="/projects/:id/:tabName?" element={<ProjectDetailsPage />} />
+                <Route path="/projects" element={<h1>Projects List Mock</h1>} />
+            </Routes>,
+            { route: '/projects/101' }
+        );
+
+        await screen.findByRole('heading', { name: 'Test Project' });
+
+        await user.click(await screen.findByRole('button', { name: /^DELETE$/i }));
+
+        expect(confirmSpy).toHaveBeenCalled();
+        expect(await screen.findByText('Projects List Mock')).toBeInTheDocument();
+        expect(deletedIds).toEqual(['101']);
+
+        confirmSpy.mockRestore();
+    }, 15000);
+
     // TC-I5: API Error Handling
     it('TC-I5: should show an error state when project details loading fails', async () => {
         server.use(

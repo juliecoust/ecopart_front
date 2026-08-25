@@ -11,7 +11,9 @@ import {
     Menu,
     MenuItem,
     IconButton,
-    Alert
+    Alert,
+    Snackbar,
+    Tooltip
 } from "@mui/material";
 import {
     DataGrid,
@@ -27,6 +29,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import FilterListIcon from "@mui/icons-material/FilterList";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import CloseIcon from "@mui/icons-material/Close";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 
 import { useNavigate } from "react-router-dom";
 import MainLayout from "@/app/layouts/MainLayout";
@@ -66,7 +69,11 @@ export default function ProjectsPage() {
         paginationModel,
         setPaginationModel,
         rowSelectionModel,
-        setRowSelectionModel
+        setRowSelectionModel,
+        isActionRunning,
+        handleDeleteProjects,
+        snackbar,
+        closeSnackbar
     } = useProjectsTable();
 
     // ---------------------------------------------------------------------------
@@ -159,6 +166,21 @@ export default function ProjectsPage() {
 
         return null;
     };
+
+    const selectedProjectIds =
+        rowSelectionModel.type === "exclude" ? [] : Array.from(rowSelectionModel.ids).map(Number);
+
+    // Deleting a project is a manager-only action server-side (admins aside), so
+    // DELETE stays disabled while the selection holds a project the current user
+    // only reads as member or contact. Selected ids whose row is no longer loaded
+    // (picked on an earlier page) are left for the server to accept or reject.
+    const canDeleteSelection =
+        selectedProjectIds.length > 0 &&
+        (currentUser?.is_admin === true ||
+            selectedProjectIds.every((projectId) => {
+                const project = projects.find((candidate) => candidate.project_id === projectId);
+                return !project || getCurrentUserPrivilege(project) === "Manager";
+            }));
 
     // ---------------------------------------------------------------------------
     // DataGrid Columns Configuration
@@ -371,15 +393,41 @@ export default function ProjectsPage() {
                             <Typography fontWeight="bold">{rowSelectionModel.ids.size} items selected</Typography>
                         </Stack>
 
-                        <Button
-                            color="inherit"
-                            endIcon={<ArrowForwardIcon />}
-                            onClick={handleExploreSelection}
-                            disabled={rowSelectionModel.ids.size === 0}
-                            sx={{ fontWeight: "bold" }}
-                        >
-                            EXPLORE SELECTION
-                        </Button>
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                            {/* DELETE is a manager-only action: the tooltip says why it is
+                                greyed out when the selection is not deletable. */}
+                            <Tooltip
+                                title={
+                                    rowSelectionModel.ids.size === 0
+                                        ? "Select at least one project"
+                                        : canDeleteSelection
+                                            ? "Permanently delete the selected project(s), their samples and any linked EcoTaxa project"
+                                            : "Only a project manager can delete a project"
+                                }
+                            >
+                                <span>
+                                    <Button
+                                        color="inherit"
+                                        startIcon={<DeleteOutlineIcon />}
+                                        onClick={handleDeleteProjects}
+                                        disabled={!canDeleteSelection || isActionRunning}
+                                        sx={{ fontWeight: "bold" }}
+                                    >
+                                        DELETE
+                                    </Button>
+                                </span>
+                            </Tooltip>
+
+                            <Button
+                                color="inherit"
+                                endIcon={<ArrowForwardIcon />}
+                                onClick={handleExploreSelection}
+                                disabled={rowSelectionModel.ids.size === 0}
+                                sx={{ fontWeight: "bold" }}
+                            >
+                                EXPLORE SELECTION
+                            </Button>
+                        </Stack>
                     </Box>
 
                     <Box sx={{ height: 600 }}>
@@ -421,6 +469,17 @@ export default function ProjectsPage() {
                     </Box>
                 </SectionCard>
             </Container>
+
+            <Snackbar
+                open={snackbar.open}
+                autoHideDuration={6000}
+                onClose={closeSnackbar}
+                anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+            >
+                <Alert onClose={closeSnackbar} severity={snackbar.severity} variant="filled" sx={{ width: "100%" }}>
+                    {snackbar.message}
+                </Alert>
+            </Snackbar>
         </MainLayout>
     );
 }

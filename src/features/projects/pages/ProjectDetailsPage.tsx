@@ -1,15 +1,20 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useParams, useNavigate } from "react-router-dom";
 import {
+    Alert,
     Box,
     Container,
     Typography,
     Button,
+    Snackbar,
+    Stack,
     Tabs,
     Tab,
+    Tooltip,
 } from "@mui/material";
 import MainLayout from "@/app/layouts/MainLayout";
 import SectionCard from "@/shared/components/SectionCard";
+import { useAuthStore } from "@/features/auth/store/auth.store";
 
 // Import your tabs
 import { ProjectMetadataTab } from "../components/ProjectMetadataTab";
@@ -18,7 +23,7 @@ import { ProjectSecurityTab } from "../components/ProjectSecurityTab";
 import { ProjectBackupTab } from "../components/ProjectBackupTab";
 import { ProjectImportTab } from "../components/ProjectImportTab";
 import { ProjectTasksTab } from "../components/ProjectTasksTab";
-import { getProjectById } from "../api/projects.api";
+import { deleteProject, getProjectById } from "../api/projects.api";
 
 // Icons based on your mockup
 import BarChartIcon from "@mui/icons-material/BarChart";
@@ -29,12 +34,14 @@ import SyncIcon from "@mui/icons-material/Sync";
 import LockIcon from "@mui/icons-material/Lock";
 import AssignmentIcon from "@mui/icons-material/Assignment";
 import BackupIcon from "@mui/icons-material/Backup";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { ProjectDataTab } from "../components/ProjectDataTab";
 
 export default function ProjectDetailsPage() {
     const { id, tabName } = useParams<{ id: string; tabName?: string }>();
     const navigate = useNavigate();
     const location = useLocation();
+    const currentUser = useAuthStore((state) => state.user);
 
     const tabDefinitions = useMemo(() => ([
         { slug: "stats", label: "STATS" },
@@ -61,6 +68,11 @@ export default function ProjectDetailsPage() {
     const projectId = parsedProjectId !== null && !Number.isNaN(parsedProjectId) ? parsedProjectId : null;
 
     const [projectTitle, setProjectTitle] = useState("Project Details");
+    // Managers of the loaded project: DELETE is a manager-only action server-side,
+    // so we only offer the button to a manager (or an admin).
+    const [managerIds, setManagerIds] = useState<number[]>([]);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     const defaultTabIndex = clampTabIndex(location.state?.activeTab, 1);
     const tabIndexFromSlug = tabName
@@ -76,12 +88,20 @@ export default function ProjectDetailsPage() {
 
             try {
                 const project = await getProjectById(projectId);
-                if (isMounted && project.project_title.trim() !== "") {
+                if (!isMounted) return;
+
+                if (project.project_title.trim() !== "") {
                     setProjectTitle(project.project_title);
                 }
+                setManagerIds(
+                    (project.managers ?? [])
+                        .map((manager) => Number(manager.user_id))
+                        .filter((userId) => !Number.isNaN(userId)),
+                );
             } catch {
                 if (isMounted) {
                     setProjectTitle("Project Details");
+                    setManagerIds([]);
                 }
             }
         };
@@ -108,6 +128,29 @@ export default function ProjectDetailsPage() {
     const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
         const nextSlug = tabDefinitions[newValue]?.slug ?? "metadata";
         navigate(`/projects/${projectId}/${nextSlug}`);
+    };
+
+    const canDelete =
+        currentUser?.is_admin === true ||
+        (currentUser != null && managerIds.includes(Number(currentUser.user_id)));
+
+    const handleDeleteProject = async () => {
+        if (!window.confirm(
+            `Are you sure you want to delete "${projectTitle}"? ` +
+            `This also removes its samples and any linked EcoTaxa project. This cannot be undone.`,
+        )) return;
+
+        setIsDeleting(true);
+        setDeleteError(null);
+        try {
+            await deleteProject(projectId);
+            navigate("/projects");
+        } catch (err) {
+            console.error("[Project Details] Delete failed", err);
+            setDeleteError(err instanceof Error ? err.message : "Unknown error while deleting the project.");
+        } finally {
+            setIsDeleting(false);
+        }
     };
 
     const renderComingSoonTab = (label: string) => (
@@ -146,13 +189,30 @@ export default function ProjectDetailsPage() {
                         </Typography>
                     </Box>
 
-                    <Button
-                        variant="outlined"
-                        color="primary"
-                        onClick={() => navigate(`/explore?projects=${projectId}`)}
-                    >
-                        EXPLORE
-                    </Button>
+                    <Stack direction="row" spacing={2} alignItems="center">
+                        {canDelete && (
+                            <Tooltip title="Permanently delete this project, its samples and any linked EcoTaxa project">
+                                <span>
+                                    <Button
+                                        variant="outlined"
+                                        color="error"
+                                        onClick={handleDeleteProject}
+                                        disabled={isDeleting}
+                                    >
+                                        DELETE
+                                    </Button>
+                                </span>
+                            </Tooltip>
+                        )}
+
+                        <Button
+                            variant="outlined"
+                            color="primary"
+                            onClick={() => navigate(`/explore?projects=${projectId}`)}
+                        >
+                            EXPLORE
+                        </Button>
+                    </Stack>
                 </Box>
 
                 {/* TABS NAVIGATION */}
@@ -190,6 +250,22 @@ export default function ProjectDetailsPage() {
                     {currentTab === 7 && <ProjectBackupTab projectId={projectId} />}
                 </Box>
             </Container>
+
+            <Snackbar
+                open={deleteError !== null}
+                autoHideDuration={6000}
+                onClose={() => setDeleteError(null)}
+                anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+            >
+                <Alert
+                    onClose={() => setDeleteError(null)}
+                    severity="error"
+                    variant="filled"
+                    sx={{ width: "100%" }}
+                >
+                    Failed to delete the project: {deleteError}
+                </Alert>
+            </Snackbar>
         </MainLayout>
     );
 }
