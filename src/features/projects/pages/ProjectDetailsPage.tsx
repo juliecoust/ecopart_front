@@ -23,6 +23,7 @@ import { ProjectSecurityTab } from "../components/ProjectSecurityTab";
 import { ProjectBackupTab } from "../components/ProjectBackupTab";
 import { ProjectImportTab } from "../components/ProjectImportTab";
 import { ProjectTasksTab } from "../components/ProjectTasksTab";
+import { ProjectStatsTab } from "../components/ProjectStatsTab";
 import { deleteProject, getProjectById } from "../api/projects.api";
 
 // Icons based on your mockup
@@ -238,7 +239,12 @@ export default function ProjectDetailsPage() {
                 {/* We removed the <Paper> wrapper here because ProjectMetadataTab handles its own <Paper> and constraints */}
                 <Box sx={{ minHeight: 400, borderRadius: 2 }}>
 
-                    {currentTab === 0 && renderComingSoonTab("Stats")}
+                    {currentTab === 0 && (
+                        <ProjectStatsTab
+                            onImportData={() => navigate(`/projects/${projectId}/import`)}
+                            onLinkProject={() => navigate(`/projects/${projectId}/metadata#ecotaxa-link`)}
+                        />
+                    )}
 
                     {currentTab === 1 && <ProjectMetadataTab projectId={projectId} />}
 
