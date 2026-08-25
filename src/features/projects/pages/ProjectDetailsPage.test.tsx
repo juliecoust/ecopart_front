@@ -115,7 +115,7 @@ describe('ProjectDetailsPage (Functional)', () => {
         const statsTab = screen.getByRole('tab', { name: /STATS/i });
         await user.click(statsTab);
 
-        expect(await screen.findByText(/Your project is empty\. You can now import data\./i)).toBeInTheDocument();
+        expect(await screen.findByText(/Import data to get started\./i)).toBeInTheDocument();
         expect(screen.getByText(/is not linked to an EcoTaxa project/i)).toBeInTheDocument();
     }, 20000);
 
