@@ -1,0 +1,86 @@
+name: Deploy to preprod server
+
+# Manual promotion only. A git tag identifies a version, it does not pick a
+# target: pushing `v*.*.*` still auto-deploys to the test server via ci.yml.
+# Preprod receives only a version that someone explicitly promotes here.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to promote, e.g. v0.0.67 (must already be on Docker Hub)'
+        required: true
+        type: string
+
+# Never let two promotions race on the same moving tag / same server.
+concurrency:
+  group: deploy-preprod
+  cancel-in-progress: false
+
+jobs:
+  # Move the moving `:preprod` tag on Docker Hub to the requested immutable
+  # version. Nothing is rebuilt and nothing is edited on the server: the
+  # preprod compose file always references `ecotaxa/ecopart_front:preprod`.
+  promote:
+    name: Point the :preprod image at the requested version
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/ecopart_front
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Fail early and loudly on a typo, rather than retagging nothing.
+      - name: Check the requested version exists on Docker Hub
+        run: |
+          if ! docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2>&1; then
+            echo "::error::$IMAGE:$VERSION was not found on Docker Hub."
+            exit 1
+          fi
+
+      # Retag registry-side (no pull, no push of layers, multi-arch preserved).
+      - name: Move the :preprod tag to the requested version
+        run: |
+          docker buildx imagetools create -t "$IMAGE:preprod" "$IMAGE:$VERSION"
+          echo "\`$IMAGE:preprod\` now points at **$VERSION**" >> "$GITHUB_STEP_SUMMARY"
+
+  # The preprod server is behind a firewall, so this runs on the org-level
+  # self-hosted runner labelled `ecopart-preprod` (group `ecopart`, installed as
+  # a systemd service and shared with ecopart_back). Nothing to install here.
+  deploy-preprod:
+    name: Restart the frontend on the preprod server
+    needs: promote
+    runs-on: [self-hosted, ecopart-preprod]
+    steps:
+      # No checkout: the server's compose file is hand-maintained at $DEPLOY_DIR
+      # and must never be copied or modified by CI.
+      - name: Deploy the promoted frontend image
+        env:
+          DEPLOY_DIR: /home/ecopart/ecopart_pre_prod
+          SERVICE: web # frontend service (the backend service `api` is left alone)
+          VERSION: ${{ inputs.version }}
+        run: |
+          cd "$DEPLOY_DIR" || { echo "::error::$DEPLOY_DIR not found."; exit 1; }
+          # The compose file there is docker-compose.yaml (.yaml, not .yml), so
+          # let docker resolve it instead of testing a hard-coded filename.
+          docker compose config --quiet || { echo "::error::No usable compose file in $DEPLOY_DIR."; exit 1; }
+          # Guard rail: if the service is still pinned to :latest, a pull would
+          # silently be a no-op and preprod would drift onto the test version.
+          if ! docker compose config | grep -q "ecopart_front:preprod"; then
+            echo "::error::The $SERVICE service does not use ecotaxa/ecopart_front:preprod."
+            exit 1
+          fi
+          # Capture the running frontend image so we remove only ours afterwards.
+          OLD_IMAGE=$(docker compose images -q "$SERVICE")
+          # Pull + recreate ONLY the frontend; the backend (api) stays untouched.
+          docker compose pull "$SERVICE"
+          docker compose up -d "$SERVICE"
+          NEW_IMAGE=$(docker compose images -q "$SERVICE")
+          if [ -n "$OLD_IMAGE" ] && [ "$OLD_IMAGE" != "$NEW_IMAGE" ]; then
+            docker image rm "$OLD_IMAGE" 2>/dev/null || true
+          fi
+          echo "Preprod frontend now running **$VERSION** (image \`$NEW_IMAGE\`)" >> "$GITHUB_STEP_SUMMARY"

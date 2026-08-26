@@ -53,7 +53,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Extract the version from the tag (e.g., v1.0.0 -> 1.0.0)
+      # Extract the version from the tag, keeping the leading v (refs/tags/v1.0.0 -> v1.0.0).
+      # This exact string is what preprod.yml expects as its `version` input.
       - name: Extract tag version
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
@@ -69,7 +70,9 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Build the image and push to Docker Hub with version and latest tags.
+      # Build the image and push to Docker Hub under two tags:
+      #   :<version>  immutable, the only thing preprod can be promoted to
+      #   :latest     moving, followed by the test server
       # Uses GitHub Actions caching.
       - name: Build and push Docker image
         uses: docker/build-push-action@v6

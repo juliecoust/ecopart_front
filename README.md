@@ -347,8 +347,24 @@ features/reports/
 Pushing a `v*.*.*` git tag triggers [`.github/workflows/ci.yml`](.github/workflows/ci.yml), which runs three jobs in sequence:
 
 1. **`test`** — runs the Vitest suite with coverage.
-2. **`build-and-push`** — builds the production Docker image and pushes it to Docker Hub as `ecotaxa/ecopart_front:<version>` and `ecotaxa/ecopart_front:latest` (login via the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` repository secrets).
+2. **`build-and-push`** — builds the production Docker image and pushes it to Docker Hub under **two tags** (login via the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` repository secrets).
 3. **`deploy-test`** — deploys that `:latest` image to the test server.
+
+### The git tag does not pick a target
+
+A `v*.*.*` git tag **identifies a version, nothing more**. It does not encode a deployment target: pushing one always deploys to **test**, and never to preprod. Preprod only ever receives a version someone has explicitly promoted, so it only runs what has already been validated on test.
+
+### Docker tags published
+
+| Docker tag | Nature | Who follows it |
+| --- | --- | --- |
+| `ecotaxa/ecopart_front:<version>` (e.g. `v0.0.67`) | **Immutable**, one build, forever that build | Nobody directly; it is the promotable unit |
+| `ecotaxa/ecopart_front:latest` | **Moving**, rewritten by every tag push | The **test** server |
+| `ecotaxa/ecopart_front:preprod` | **Moving**, rewritten only by a manual promotion | The **preprod** server |
+
+The immutable per-version tag is what makes preprod possible at all: with `:latest` alone, preprod would necessarily run the same version as test.
+
+The version string keeps its leading `v` (the git tag `v0.0.67` produces the Docker tag `v0.0.67`).
 
 ### Test-server deploy
 
@@ -374,6 +390,41 @@ The `deploy-test` job is **strictly scoped to the `web` service**:
 
   The backend `api` service keeps running and is left completely untouched.
 * For cleanup it removes **only the previous frontend image**: it captures the `web` image id (`docker compose images -q web`) before the pull and, afterwards, `docker image rm`s the old id only if it changed and is now unused. There is **no** host-wide `docker image prune`.
+
+### Preprod deploy (manual promotion)
+
+Preprod is driven by [`.github/workflows/preprod.yml`](.github/workflows/preprod.yml), which is **manual only** (`workflow_dispatch`).
+
+**How to promote a version**
+
+1. Go to the repo's **Actions** tab.
+2. Pick **Deploy to preprod server** in the left-hand workflow list.
+3. Click **Run workflow**, type the version to promote in the `version` field (e.g. `v0.0.67`, exactly as the git tag, leading `v` included), and confirm.
+
+The workflow then runs two jobs:
+
+1. **`promote`** (GitHub-hosted) checks that `ecotaxa/ecopart_front:<version>` really exists on Docker Hub, then retags it registry-side with `docker buildx imagetools create -t …:preprod`. No rebuild, no layer transfer, multi-arch manifest preserved. A typo fails the job with an explicit error instead of silently doing nothing.
+2. **`deploy-preprod`** (self-hosted) pulls and restarts the frontend on the preprod server.
+
+**Rollback is the same operation with an earlier version number.** There is no separate procedure: re-run the workflow with, say, `v0.0.66` and the `:preprod` tag moves back. Because every version tag is immutable, an old version is always still there to roll back to.
+
+**Preprod server**
+
+Like test, preprod is behind a firewall and runs on a **self-hosted runner registered at the GitHub organization level** (group `ecopart`, label **`ecopart-preprod`**, installed as a systemd service). It is shared with the backend repo and already online, so this repo just targets the label (`runs-on: [self-hosted, ecopart-preprod]`) with nothing to install.
+
+```
+DEPLOY_DIR = /home/ecopart/ecopart_pre_prod
+```
+
+Notes on that server, which the job is written around:
+
+* Its compose file is named **`docker-compose.yaml`** (`.yaml`, not `.yml`). The job therefore validates it with `docker compose config --quiet` and lets Docker resolve the filename, rather than testing a hard-coded name.
+* The `web` service must pin `image: 'ecotaxa/ecopart_front:preprod'`. This is a **one-off manual edit on the server**; afterwards CI only moves the tag in the registry and never touches the compose file again. If the pin is missing, the job fails with an explicit message instead of running a pull that would have no effect.
+* As on test, only the `web` service is pulled and recreated, and only the previous frontend image is removed. The backend half of the stack is left untouched.
+
+### Known issue: the test runner is offline
+
+The **test** runner (label `ecopart-test`) lives on a different machine and was never installed as a service, so it is currently offline. Until it is fixed there (`./svc.sh install <user> && ./svc.sh start` in its installation directory), **pushing a tag deploys nothing to test**, for the frontend or the backend. Build and push still work; only the `deploy-test` job is affected. Preprod is unaffected, its runner is a service and is online.
 
 ## 🔮 Future Improvements (Planned)
 * techno/architecture :
